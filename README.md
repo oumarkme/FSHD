@@ -11,7 +11,7 @@ python pipeline/fshd_v1.py -p PREFIX
 - pandas
 - plotnine
 
-## Required system install softwares
+## Required system installed softwares
 - samtools
 - makeblasdb
 - blastn

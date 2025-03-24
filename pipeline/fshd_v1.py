@@ -1,5 +1,6 @@
 import os
 import argparse
+import sys
 import pandas as pd
 from plotnine import *
 
@@ -57,7 +58,7 @@ tail = (
 )
 
 
-### Sequence ID with head sequence (P13E11)
+### Sequence ID with head sequence
 os.system(f'{BLASTN} -db {DB} -query {QUERY}/P13E11.fasta -out {TMP}/head.blast -num_threads {CORES} -outfmt 6')
 
 head = (
@@ -115,12 +116,12 @@ D4Z4.to_csv(f'{WD}/FSHD-{PREFIX}.tsv', sep='\t', index=False)
 
 # BAM file
 pd.DataFrame({'Seq-id': list(set(head['Seq-id']).union(set(tail['Seq-id'])))}).to_csv(f'{TMP}/headandtail.txt', index=False, header=False)
-os.system(f'{SAMTOOLS} view -C -T {REF} -@ {CORES} -N {TMP}/headandtail.txt -o DUX4.cram {TMP}/tmp.bam')
-os.system(f'{SAMTOOLS} index -@ {CORES} DUX4.cram')
+os.system(f'{SAMTOOLS} view -C -T {REF} -@ {CORES} -N {TMP}/headandtail.txt -o {WD}/DUX4.cram {TMP}/tmp.bam')
+os.system(f'{SAMTOOLS} index -@ {CORES} {WD}/DUX4.cram')
 
 
 ### Calculate methylation level
-os.system(f'{BAM2CPG} --bam DUX4.cram --ref {REF} --model /nanopore_nas/pipeline/data/pileup_calling_model.v1.tflite --output-prefix {TMP}/tmp --threads {CORES}')
+os.system(f'{BAM2CPG} --bam {WD}/DUX4.cram --ref {REF} --model /nanopore_nas/pipeline/data/pileup_calling_model.v1.tflite --output-prefix {TMP}/tmp --threads {CORES}')
 
 # Load CpG scores
 meth = (
@@ -139,3 +140,7 @@ plt = (
         theme(figure_size=(3, 3), dpi=200,  axis_ticks_x=None, axis_text_x=None, axis_title_x=None)
 )
 plt.save(f'{WD}/methylation.jpeg')
+
+# Remove temporary files
+os.system(f'rm -rf {TMP}/*')
+sys.exit(0)

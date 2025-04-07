@@ -11,7 +11,7 @@ parser.add_argument('-p', '--prefix', required=True, help='Sample Prefix')
 PREFIX = parser.parse_args().prefix
 
 # working directory
-WD = f'/lab_nas_home_user/Mark/ONT/{PREFIX}'
+WD = f'/nanopore_nas/nanopore_pipeline/{PREFIX}/60.FSHD'
 os.makedirs(WD, exist_ok=True)
 
 # Set threads

@@ -1,6 +1,14 @@
 # FSHD D4Z4 Repeat Analysis Pipeline (v3)
 
-ONT long-read WGS pipeline for FSHD D4Z4 analysis using R10.4.1 chemistry. Extracts FSHD-relevant reads from hg38 BAM, realigns to T2T-CHM13v2.0, disambiguates 4q/10q, counts D4Z4 repeat units per read, and reports methylation percentage at the distal D4Z4/DUX4 region. FSHD2 modifier gene screening (SMCHD1/DNMT3B/LRIF1) is performed separately outside this pipeline. Full design rationale in `doc/fshd_info.md`.
+ONT long-read WGS pipeline for FSHD D4Z4 analysis using R10.4.1 chemistry. Extracts FSHD-relevant reads from hg38 BAM/CRAM, realigns to T2T-CHM13v2.0, counts D4Z4 repeat units per read, classifies haplotype (4qA/4qB), and reports methylation percentage at the distal D4Z4/DUX4 region. FSHD2 modifier gene screening (SMCHD1/DNMT3B/LRIF1) is performed separately outside this pipeline. Full design rationale in `doc/fshd_info.md`.
+
+## Usage
+
+```bash
+bash nf-fshd/run.sh <input.bam|cram> [extra nextflow args...]
+```
+
+The `run.sh` script auto-detects the environment (WSL or GS4), builds the Apptainer container if needed, and launches Nextflow with `-resume`.
 
 ## Server Environment
 
@@ -11,7 +19,7 @@ Both machines share the same mounted filesystem. Development on WSL, production 
 | Access | local | `ssh gs4` |
 | CPUs | 8 (limit: 5) | 96 (limit: 67) |
 | RAM | 30 GB (limit: 21 GB) | 1.7 TB (limit: 1.2 TB) |
-| GPU | — | 4× NVIDIA RTX 4090 |
+| GPU | — | 4x NVIDIA RTX 4090 |
 | Conda env | `/home/mark/miniforge3/envs/mark/bin` | `/home/user/miniforge-pypy3/envs/mark/bin` |
 | Nextflow | In conda env above | In conda env above |
 | Apptainer | In conda env above | In conda env above |
@@ -26,243 +34,212 @@ CPU and RAM usage capped at **70%** on both machines.
 | `/gene_lv/` | NAS (mounted) | Input CRAM files |
 | `/raid/nf/tmp` | Local disk (fast) | Nextflow work directory (intermediate files) |
 
-### Directory Structure
+### Output Directory Structure
 
 ```
 /lab_nas_home_user/Mark/ONT/FSHD/                  # Pipeline output root
 └── {SAMPLE_ID}/                                    # e.g. WGS-ONT019-5657831-D23881/
     ├── {SAMPLE_ID}.d4z4.bam                        # D4Z4 subset BAM aligned to T2T
     ├── {SAMPLE_ID}.d4z4.bam.bai                    # BAM index
-    ├── {SAMPLE_ID}.d4z4_counts.tsv                 # RU counts per read
-    ├── {SAMPLE_ID}.methylation.bed                 # Per-CpG methylation (bedMethyl)
-    └── {SAMPLE_ID}.report.tsv                      # Summary: RU counts + methylation %
+    ├── {SAMPLE_ID}.repeats.tsv                     # Table 1: RU counts by haplotype
+    └── {SAMPLE_ID}.methylation.tsv                 # Table 2: Methylation vs controls
 ```
 
-Nextflow work directory: `/raid/nf/tmp` (local SSD on both WSL and GS4, cleaned after successful runs).
+Nextflow work directory: `/raid/nf/tmp` (local SSD, cleaned after successful runs).
+
+---
 
 ## Pipeline Overview
 
 ```
-hg38 BAM → extract FSHD regions + unmapped → revert to unaligned
-→ minimap2 to T2T-CHM13v2.0 → extract D4Z4 candidates
-→ BLAST 4q/10q disambiguation → BLAST D4Z4 RU counting
-→ modkit methylation pileup → report (RU counts + methylation %)
+EXTRACT_FSHD_READS ─→ REALIGN_T2T ─→ EXTRACT_D4Z4 ─→ BLAST_ANALYSIS ─→ METHYLATION ─→ REPORT
+                                            │              │                  │              │
+                                      d4z4.bam (pub)  d4z4_counts.tsv   methylation.bed  repeats.tsv (pub)
+                                      d4z4.bam.bai                                        methylation.tsv (pub)
 ```
+
+`(pub)` = published to output directory. Intermediate files stay in the Nextflow work directory.
+
+---
 
 ## Pipeline Steps
 
-### Step 1: Targeted read extraction + T2T realignment
+### Step 1: EXTRACT_FSHD_READS — Targeted read extraction
 
-Extract FSHD-relevant reads from hg38-aligned BAM (~2–5% of total data), revert to unaligned, and realign to T2T-CHM13v2.0 where the D4Z4 arrays are fully resolved.
+Extract FSHD-relevant reads from hg38-aligned BAM/CRAM. Includes reads mapping to D4Z4 regions on chr4/chr10 and unmapped reads (the hg38 gap at 4q35 causes many D4Z4 reads to be unmapped).
 
-**1a. Define hg38 extraction regions:**
+**hg38 extraction regions:**
 
 | Region | hg38 Coordinates | Purpose |
 |---|---|---|
 | 4q35 D4Z4 + flanking | chr4:189,900,000–190,215,000 | D4Z4 array + flanking (includes ~82 kb assembly gap) |
 | 10q26 D4Z4 + flanking | chr10:133,500,000–133,798,000 | 10q D4Z4 homolog (poorly assembled in hg38) |
-| D4Z4-like paralogs | chr3, chr10p, chr18q, acrocentric chr | Reads misassigned to these paralogs under hg38 |
-
-Unmapped reads are also extracted — the hg38 gap at 4q35 causes many D4Z4 reads to be unmapped.
 
 ```bash
-samtools view -b -h -M -L fshd_regions_hg38.bed --fetch-pairs input.bam -o target.bam
-samtools view -b -f 4 input.bam -o unmapped.bam
-samtools merge -o fshd_subset.bam target.bam unmapped.bam
+samtools view -b -h -M -L regions.bed input.cram -o target.bam
+samtools view -b -f 4 input.cram -o unmapped.bam
+samtools merge -o subset.bam target.bam unmapped.bam
 ```
 
-**1b. Revert to unaligned BAM preserving methylation tags:**
+### Step 2: REALIGN_T2T — T2T-CHM13v2.0 realignment
+
+Convert extracted reads to FASTQ (preserving MM/ML methylation tags), realign to T2T-CHM13v2.0 where the D4Z4 arrays are fully resolved.
 
 ```bash
-samtools reset --keep-tag MM,ML fshd_subset.bam -o unaligned.bam
-```
-
-Requires samtools ≥1.17. Strips alignment info (CIGAR, MAPQ, coordinates) while preserving MM/ML modification tags. Handles reverse-complement orientation reversal correctly.
-
-**1c. Align to T2T-CHM13v2.0 with minimap2:**
-
-```bash
-minimap2 -ax lr:hq -y --eqx --secondary=no \
-  -t ${CORES} chm13v2.0.fa unaligned.bam \
-  | samtools sort -@ 8 -o aligned.bam
-samtools index aligned.bam
+samtools fastq -T MM,ML subset.bam \
+  | minimap2 -ax lr:hq -y --eqx --secondary=no -t ${CPUS} chm13v2.0.fa - \
+  | samtools sort -o sample.t2t.bam
+samtools index sample.t2t.bam
 ```
 
 | Flag | Purpose |
 |---|---|
-| `-ax lr:hq` | ONT R10.4.1 Q20+ preset (not `map-ont` which is for older/noisier data) |
-| `-y` | Propagates MM/ML methylation tags from input to output |
-| `--eqx` | Emits `=`/`X` CIGAR operators for exact match/mismatch (useful for PSV analysis) |
+| `samtools fastq -T MM,ML` | Convert BAM to FASTQ carrying methylation tags in the comment |
+| `-ax lr:hq` | ONT R10.4.1 Q20+ preset |
+| `-y` | Propagates MM/ML methylation tags from FASTQ comment to SAM output |
+| `--eqx` | Emits `=`/`X` CIGAR operators for exact match/mismatch |
 | `--secondary=no` | Suppresses secondary alignments (recommended for methylation analysis) |
 
-**Key T2T-CHM13v2.0 coordinates:**
+### Step 3: EXTRACT_D4Z4 — D4Z4 candidate extraction
+
+Extract reads mapping to D4Z4 array regions in T2T coordinates. This subset BAM is published for IGV review.
+
+**T2T-CHM13v2.0 extraction regions:**
 
 | Region | Coordinates | Notes |
 |---|---|---|
-| Chr4 D4Z4 + flanking | chr4:193,282,466–193,558,261 | ~276 kb; 33 RUs in reference |
-| Chr4 DUX4 methylation target | chr4:193,540,172–193,543,634 | Distal D4Z4 + DUX4 promoter/coding |
-| Chr4 p13E-11 anchor | chr4:192,667,301–192,902,247 | Upstream unique anchoring region |
-| Chr10 D4Z4 array | chr10:134,615,120–134,741,148 | ~126 kb |
+| Chr4 D4Z4 + flanking | chr4:193,230,000–193,610,000 | ~380 kb; includes full D4Z4 array |
+| Chr10 D4Z4 + flanking | chr10:134,560,000–134,800,000 | ~240 kb |
 
-**Reference genomes:**
+### Step 4: BLAST_ANALYSIS — RU counting + haplotype classification
+
+Build a BLAST database from D4Z4 candidate reads and query with three feature sequences:
+
+| Query file | Purpose |
+|---|---|
+| `d4z4.fa` | D4Z4 repeat unit (~3.3 kb) for RU counting |
+| `pLAM-polyA.fa` | hapA (ATTAAA) / hapB (ATCAAA) for permissive haplotype check + distal anchor |
+| `P13E11.fasta` | D4F104S1 (p13E-11) probe for proximal anchor |
+
+**4a. D4Z4 repeat unit counting:**
+
+BLAST the 3.3 kb D4Z4 unit against each read. Hits with alignment length >1,500 bp are counted as valid repeat units (DUCKS4 method).
+
+**4b. Read completeness classification (DUCKS4):**
+
+| Category | Definition | Haplotype determination |
+|---|---|---|
+| **Complete** | Contains both P13E11 (proximal) AND pLAM (distal) | Yes — from pLAM SNP |
+| **Partial-distal** | Contains pLAM but not P13E11 | Yes — from pLAM SNP |
+| **Partial-proximal** | Contains P13E11 but not pLAM | No — haplotype = `-` |
+| **Incomplete** | D4Z4 only, no flanking anchors | No — haplotype = `-` |
+
+**4c. Permissive haplotype check (chr4 only):**
+
+For chr4-assigned reads containing pLAM, compare BLAST mismatch counts of hapA vs hapB queries:
+
+| PAS variant | Haplotype | FSHD relevance |
+|---|---|---|
+| ATTAAA (hapA matches better) | 4qA | Permissive — DUX4 mRNA is polyadenylated and stable |
+| ATCAAA (hapB matches better) | 4qB | Non-permissive — no stable DUX4 transcript |
+
+Permissive check is only applied to chr4 reads. Chr10 reads matching hapB confirms 10q origin.
+
+### Step 5: METHYLATION — Allele-specific CpG methylation
+
+Runs after BLAST_ANALYSIS. Selects reads for methylation pileup using a tiered priority:
+
+1. **Two haplotypes on chr4** (4qA + 4qB identified): use reads from the shorter (contracted) allele
+2. **Complete 4qA reads available**: use those
+3. **Any 4qA reads**: use all 4qA reads
+4. **Fallback**: all chr4 reads from the D4Z4 BAM
+
+For each tier, filters the D4Z4 BAM to selected reads and runs modkit. If the tier produces no CpG data (reads don't overlap the methylation target), the next tier is tried.
+
+```bash
+modkit pileup selected.bam methylation.bed \
+  --ref chm13v2.0.fa \
+  --cpg \
+  --combine-strands \
+  --combine-mods \
+  --modified-bases 5mC \
+  --include-bed meth_targets.bed
+```
+
+**Methylation target:** chr4:193,540,172–193,543,634 (distal D4Z4 + DUX4 promoter/coding region).
+
+### Step 6: REPORT — Summary tables
+
+Generates two output tables from the BLAST counts and methylation data.
+
+**Table 1: `{SAMPLE_ID}.repeats.tsv`** — D4Z4 repeat analysis, grouped by chromosome, haplotype, and completeness:
+
+| Chromosome | Haplotype | RU_Counts | Read_Count | Complete |
+|---|---|---|---|---|
+| chr4 | 4qA | 4 | 1 | TRUE |
+| chr4 | - | 1~22 | 51 | FALSE |
+| chr10 | - | 9~13 | 4 | FALSE |
+
+- **Haplotype**: `4qA` / `4qB` for reads with pLAM (distal anchor); `-` otherwise
+- **RU_Counts**: range as `min~max`, or single value if all reads agree
+- **Complete**: `TRUE` only for reads with both P13E11 (proximal) and pLAM (distal) anchors
+
+**Table 2: `{SAMPLE_ID}.methylation.tsv`** — Methylation at two sub-regions vs healthy controls:
+
+| Region | Methylation_Pct | Control_Methylation_IQR [25%, 50%, 75%] |
+|---|---|---|
+| DR1 | 22.58 | [49.91, 52.29, 54.65] |
+| DUX4-PAS | 30.0 | [53.13, 55.33, 59.2] |
+
+**Methylation sub-regions (T2T-CHM13v2.0 chr4 coordinates):**
+
+| Region | Coordinates | CpGs | Clinical significance |
+|---|---|---|---|
+| DR1 | chr4:193,541,000–193,541,600 | 29 | D4Z4 promoter; focal demethylation domain. <25% suggests FSHD2 |
+| DUX4-PAS | chr4:193,543,430–193,543,634 | 10 | Polyadenylation signal region; includes CpG6 |
+
+**Reference methylation thresholds:**
+
+| Metric | Healthy | FSHD1 (contracted allele) | FSHD2 (all arrays) | Source |
+|---|---|---|---|---|
+| DR1 region mean CpG methylation | >35% | Variable (hypomethylated) | <25% | Hartweck 2013, Lemmers 2015 |
+| DUX4-PAS CpG6 | >78% | <=78% | <=78% | Cascella 2018 |
+| DUX4 upstream (ONT-specific) | >46.85% | <=46.85% | <=46.85% | Huang et al. 2024 (AUC 0.996) |
+| DUX4 gene body (ONT-specific) | >58.56% | <=58.56% | <=58.56% | Huang et al. 2024 |
+
+---
+
+## Reference Genomes
 
 | Genome | Path |
 |---|---|
 | hg38 | `/lab_nas_home_user/Mark/reference_genome/hg38/GCA_000001405.15_GRCh38_full_plus_hs38d1_analysis_set_modified.fasta` |
 | T2T-CHM13v2.0 | `/lab_nas_home_user/Mark/reference_genome/t2t/GCF_009914755.1_T2T-CHM13v2.0_genomic.fna` |
 
-Both use chr-prefixed naming (chr1, chr2, ...). The T2T reference is the NCBI version but has standard chromosome names — compatible with all coordinates in this document.
+Both use chr-prefixed naming (chr1, chr2, ...). The T2T reference is the NCBI version with standard chromosome names.
 
----
+**Key T2T-CHM13v2.0 coordinates:**
 
-### Step 2: 4q vs 10q disambiguation
-
-The D4Z4 arrays on 4q35 and 10q26 share >98% sequence identity. Classification follows the DUCKS4 method (Löwenstern et al. 2026): BLAST chromosome-specific feature sequences against each candidate read and assign by percent identity comparison.
-
-**2a. Extract D4Z4 candidate reads:**
-
-```bash
-samtools view -b aligned.bam \
-  "chr4:193,230,000-193,610,000" \
-  "chr10:134,560,000-134,800,000" \
-  > d4z4_candidates.bam
-samtools fasta d4z4_candidates.bam > d4z4_reads.fa
-```
-
-**2b. Build feature BLAST database and classify reads:**
-
-Feature sequences for the BLAST database (following DUCKS4):
-
-| Feature | Variants | Purpose |
+| Region | Coordinates | Notes |
 |---|---|---|
-| D4F104S1 (p13E-11 probe) | 4qA, 4qB, 10q26 | ~15 SNPs differentiate haplotypes; highest identity determines chromosome |
-| D4Z4 repeat unit | chr4 (3,298 bp), chr10 (3,309 bp) | Chromosome-specific D4Z4 unit sequences from T2T |
-| pLAM | 4qA, 4qB, 10q26 | Distal sequence with diagnostic PAS variants |
-| BlnI motif (CCTAGG) | — | Present in 10q D4Z4 (B+), absent in 4q (B−) |
-| XapI motif (AAATTCC) | — | Present in 4q D4Z4 (X+), absent in 10q (X−) |
-
-```bash
-makeblastdb -in d4z4_features.fa -dbtype nucl -out features_db
-blastn -query d4z4_reads.fa -db features_db \
-  -outfmt "6 qseqid sseqid pident length bitscore" \
-  -evalue 1e-5 -num_threads ${CORES} \
-  > blast_hits.tsv
-```
-
-**2c. Classification logic per read:**
-
-For each read, compare BLAST percent identity against each feature variant (4q vs 10q). The variant with highest identity determines chromosome assignment. Confirm with restriction site motif pattern:
-- **Canonical 4q**: B−X+ (no BlnI site, has XapI site)
-- **Canonical 10q**: B+X− (has BlnI site, no XapI site)
-- **Mixed B−X−**: Hybrid/translocated array — flag for manual review
-
-Reads that cannot be confidently assigned are excluded from downstream analysis.
+| Chr4 D4Z4 array | chr4:193,282,466–193,558,261 | ~276 kb; 33 RUs in reference |
+| Chr4 DUX4 methylation target | chr4:193,540,172–193,543,634 | Distal D4Z4 + DUX4 promoter/coding |
+| Chr4 p13E-11 anchor | chr4:192,667,301–192,902,247 | Upstream unique anchoring region |
+| Chr10 D4Z4 array | chr10:134,615,120–134,741,148 | ~126 kb |
 
 ---
 
-### Step 3: D4Z4 repeat counting
+## Query Sequences (`nf-fshd/query/`)
 
-**3a. Per-read repeat counting via BLAST:**
-
-BLAST a full 3.3 kb D4Z4 reference unit against each chromosome-assigned read. Count hits with alignment length >1,500 bp as valid repeat units (DUCKS4 method).
-
-```bash
-blastn -query d4z4_single_unit.fa -db reads_db \
-  -outfmt "6 qseqid sseqid pident length sstart send" \
-  -evalue 1e-50 -num_threads ${CORES} \
-  > d4z4_counts.tsv
-```
-
-Filter: keep hits where `length > 1500`. Count remaining hits per read = D4Z4 repeat units.
-
-**3b. Read completeness classification:**
-
-| Category | Definition | Use |
+| File | Used | Purpose |
 |---|---|---|
-| **Complete** | Contains both D4F104S1 (proximal) AND pLAM (distal) anchors | Accurate total repeat count |
-| **Partial-distal** | Contains D4Z4 + pLAM but not D4F104S1 | Minimum repeat count |
-| **Partial-proximal** | Contains D4F104S1 + D4Z4 but not pLAM | Minimum repeat count |
-| **Incomplete** | D4Z4 only, no flanking anchors | Excluded from sizing |
-
-Only **complete reads** provide accurate total repeat counts. At 30× WGS coverage, expect 3–10 reads spanning into the D4Z4 array from each side per chromosome. Short pathogenic arrays (1–10 RU = 3.3–33 kb) can be fully spanned by ultra-long ONT reads (>50 kb).
-
-**3c. Permissive haplotype check:**
-
-For chr4-assigned reads containing pLAM, check the polyadenylation signal at chr4:193,543,619:
-- **ATTAAA** → 4qA (permissive; FSHD-relevant)
-- **ATCAAA** → 10qA (confirms chr10 origin)
-- **No pLAM** + beta-satellite → 4qB (non-permissive)
+| `d4z4.fa` | Yes | D4Z4 repeat unit for RU counting (hits >1,500 bp = 1 RU) |
+| `pLAM-polyA.fa` | Yes | hapA (ATTAAA) / hapB (ATCAAA) for permissive check + distal anchor |
+| `P13E11.fasta` | Yes | D4F104S1 (p13E-11) probe for proximal anchor |
+| `dbet.fa` | No | Previously used as proximal marker (replaced by P13E11) |
+| `exon2.fasta` | No | Previously used as distal marker (replaced by pLAM) |
 
 ---
-
-### Step 4: Methylation analysis
-
-**4a. Per-site methylation pileup with modkit:**
-
-```bash
-modkit pileup aligned.bam d4z4_methylation.bed \
-  --cpg \
-  --combine-strands \
-  --combine-mods \
-  --ref chm13v2.0.fa \
-  --include-bed d4z4_methylation_targets.bed \
-  --filter-threshold C:0.75
-```
-
-Target regions in `d4z4_methylation_targets.bed`:
-```
-chr4    193540172    193543634    distal_D4Z4_DUX4_chr4
-chr10   134738000    134741148    distal_D4Z4_chr10
-```
-
-The target region chr4:193,540,172–193,543,634 covers the most distal D4Z4 repeat unit including the DUX4 promoter and coding region. Key sub-regions:
-- **DR1 region** (29 CpGs): Focal demethylation domain; most informative for FSHD2
-- **DUX4-PAS region** (10 CpGs): Includes CpG6, the single most discriminating site
-
-**4b. Reference methylation thresholds:**
-
-| Metric | Healthy | FSHD1 (contracted allele) | FSHD2 (all arrays) | Source |
-|---|---|---|---|---|
-| DR1 region mean CpG methylation | >35% | Variable (hypomethylated) | <25% | Hartweck 2013, Lemmers 2015 |
-| DUX4-PAS CpG6 | >78% | ≤78% | ≤78% | Cascella 2018 |
-| DUX4 upstream (ONT-specific) | >46.85% | ≤46.85% | ≤46.85% | Huang et al. 2024 (AUC 0.996) |
-| DUX4 gene body (ONT-specific) | >58.56% | ≤58.56% | ≤58.56% | Huang et al. 2024 |
-
----
-
-## Output
-
-Per sample, the pipeline produces:
-
-| Field | Description |
-|---|---|
-| Sample ID | Sample prefix |
-| Chr4 reads: RU counts | D4Z4 repeat units per read (with completeness flag) |
-| Chr10 reads: RU counts | D4Z4 repeat units per read (with completeness flag) |
-| Chr4 haplotype | 4qA / 4qB per read (from pLAM check) |
-| D4Z4 methylation % (chr4) | Mean CpG methylation at chr4:193,540,172–193,543,634 |
-| D4Z4 methylation % (chr10) | Mean CpG methylation at chr10:134,738,000–134,741,148 |
-| Per-CpG methylation | bedMethyl file with per-site methylation frequencies |
-| Complete spanning reads | Count per chromosome |
-
----
-
-## Query Sequences (`querySeq/`)
-
-| File | Purpose |
-|---|---|
-| `DBET.fasta` | Head (proximal) marker for D4Z4 array |
-| `exon2.fasta` | Tail (distal) marker for D4Z4 array |
-| `MIR8078.fasta` | D4Z4 repeat unit marker (83 bp; v1/v2 only, replaced by full 3.3 kb unit in v3) |
-| `pLAM-polyA.fasta` | hapA (ATTAAA) / hapB (ATCAAA) for permissive check |
-| `pLAM.fasta` | pLAM distal sequence |
-| `P13E11.fasta` | p13E-11 probe region for 4q/10q disambiguation |
-| `meth_reg.fasta` | Methylation region reference |
-
-**New feature sequences needed for v3** (from DUCKS4 BLAST database):
-- D4F104S1 variants: 4qA, 4qB, 10q26
-- Full D4Z4 units: chr4 (3,298 bp), chr10 (3,309 bp) from T2T-CHM13v2.0
-- pLAM variants: 4qA, 4qB, 10q26
 
 ## Test Sample
 
@@ -282,29 +259,34 @@ Per sample, the pipeline produces:
 
 ---
 
-## Dependencies
+## Container
 
-### Conda container (`nf-fshd/Dockerfile`)
+All Nextflow processes use a local Apptainer SIF image built from `nf-fshd/environment.def`. The `run.sh` script automatically rebuilds the SIF when the def file is newer or the SIF doesn't exist.
+
+### Container packages (`nf-fshd/environment.def`)
 
 | Tool | Channel | Version | Purpose |
 |---|---|---|---|
-| samtools | bioconda | 1.23 | BAM extraction, reset, sort, index |
+| samtools | bioconda | 1.23 | BAM/CRAM extraction, FASTQ conversion, sort, index, merge |
 | bcftools | bioconda | 1.23 | General BAM/VCF utilities |
 | minimap2 | bioconda | 2.30 | T2T alignment with `-y` methylation tag propagation |
-| blast | bioconda | 2.17.0 | 4q/10q disambiguation + D4Z4 RU counting |
-| ont-modkit | bioconda | 0.6.1 | ONT CpG methylation pileup |
-| pysam | bioconda | 0.23.3 | BAM manipulation in Python |
-| pandas | conda-forge | 3.0.1 | Data analysis |
+| blast | bioconda | 2.17.0 | D4Z4 RU counting + haplotype classification |
+| ont-modkit | bioconda | 0.6.1 | ONT CpG methylation pileup (`--modified-bases 5mC`) |
+| pysam | bioconda | 0.23.3 | BAM read iteration in Python |
+| pandas | conda-forge | 3.0.1 | Data analysis for BLAST results and report generation |
 | plotnine | conda-forge | 0.15.3 | Visualization |
+
+---
 
 ## Reference Pipelines
 
-- **DUCKS4** (Löwenstern et al. 2026, Human Genomics): Docker, T2T, BLAST + modkit. github.com/tamara-nano/ducks4
+- **DUCKS4** (Lowenstern et al. 2026, Human Genomics): Docker, T2T, BLAST + modkit. github.com/tamara-nano/ducks4
 - **D4Z4End2End** (Xiao et al. 2025, Genome Research): Full array assembly + Racon consensus. github.com/lucindaxiao/D4Z4End2End
-- **Huang et al. (2024, J Transl Med)**: WGS-only ONT at ~29× with 100% OGM concordance, AUC 0.996 for methylation
+- **Huang et al. (2024, J Transl Med)**: WGS-only ONT at ~29x with 100% OGM concordance, AUC 0.996 for methylation
 
 ## Known Limitations (WGS-only)
 
-- **Coverage**: ~5–15× effective at D4Z4 vs 50–500× with Cas9 enrichment. Mitigate with ≥60× mean genome coverage + ultra-long read protocol (SQK-ULK114)
-- **Large normal arrays** (≥11 RU = ≥36 kb): Most WGS reads cannot span; pipeline reports minimum repeat count
-- **Hybrid/translocated arrays** (~10–20% of individuals): Mixed BlnI/XapI patterns flagged for manual review
+- **Coverage**: ~5-15x effective at D4Z4 vs 50-500x with Cas9 enrichment. Mitigate with >=60x mean genome coverage + ultra-long read protocol (SQK-ULK114)
+- **Large normal arrays** (>=11 RU = >=36 kb): Most WGS reads cannot span; pipeline reports minimum repeat count
+- **Hybrid/translocated arrays** (~10-20% of individuals): Mixed BlnI/XapI patterns flagged for manual review
+- **Methylation allele specificity**: When haplotype-classified reads don't overlap the methylation target region, the pipeline falls back to all chr4 D4Z4 reads, which may mix alleles

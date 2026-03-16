@@ -1,0 +1,102 @@
+Mar-16 18:08:48.318 [main] DEBUG nextflow.cli.Launcher - $> nextflow -log /lab_nas_home_user/Mark/FSHD/nf-fshd/nf-fshd.log run /lab_nas_home_user/Mark/FSHD/nf-fshd/main.nf -profile gs4 --input /gene_lv/NGS_gene_lv_Storage/WGS/analysis/pipeline_output/WGS-ONT/WGS-ONT019-5657831-D23881/WGS-ONT019-5657831-D23881_sup_Q13_20250310120409/OUTPUT/1.ALIGNMENT/WGS-ONT019-5657831-D23881.cram --resume
+Mar-16 18:08:48.498 [main] DEBUG nextflow.cli.CmdRun - N E X T F L O W  ~  version 25.10.4
+Mar-16 18:08:48.526 [main] DEBUG nextflow.plugin.PluginsFacade - Setting up plugin manager > mode=prod; embedded=false; plugins-dir=/home/user/.nextflow/plugins; core-plugins: nf-amazon@3.4.4,nf-azure@1.20.2,nf-cloudcache@0.5.0,nf-codecommit@0.5.0,nf-console@1.3.0,nf-google@1.23.5,nf-k8s@1.2.2,nf-tower@1.17.5,nf-wave@1.16.1
+Mar-16 18:08:48.557 [main] INFO  o.pf4j.DefaultPluginStatusProvider - Enabled plugins: []
+Mar-16 18:08:48.558 [main] INFO  o.pf4j.DefaultPluginStatusProvider - Disabled plugins: []
+Mar-16 18:08:48.561 [main] INFO  org.pf4j.DefaultPluginManager - PF4J version 3.12.0 in 'deployment' mode
+Mar-16 18:08:48.581 [main] DEBUG nextflow.util.RetryConfig - Missing nextflow session - using default retry config
+Mar-16 18:08:48.744 [main] INFO  org.pf4j.AbstractPluginManager - No plugins
+Mar-16 18:08:48.781 [main] DEBUG nextflow.config.ConfigBuilder - Found config base: /lab_nas_home_user/Mark/FSHD/nf-fshd/nextflow.config
+Mar-16 18:08:48.785 [main] DEBUG nextflow.config.ConfigBuilder - Parsing config file: /lab_nas_home_user/Mark/FSHD/nf-fshd/nextflow.config
+Mar-16 18:08:48.820 [main] DEBUG nextflow.config.ConfigBuilder - Applying config profile: `gs4`
+Mar-16 18:08:49.483 [main] DEBUG nextflow.config.ConfigBuilder - Available config profiles: [wsl, gs4]
+Mar-16 18:08:49.515 [main] DEBUG nextflow.plugin.PluginsFacade - Plugins default=[]
+Mar-16 18:08:49.516 [main] DEBUG nextflow.plugin.PluginsFacade - Plugins resolved requirement=[]
+Mar-16 18:08:49.530 [main] DEBUG n.secret.LocalSecretsProvider - Secrets store: /home/user/.nextflow/secrets/store.json
+Mar-16 18:08:49.533 [main] DEBUG nextflow.secret.SecretsLoader - Discovered secrets providers: [nextflow.secret.LocalSecretsProvider@286090c] - activable => nextflow.secret.LocalSecretsProvider@286090c
+Mar-16 18:08:49.556 [main] DEBUG nextflow.cli.CmdRun - Applied DSL=2 from script declaration
+Mar-16 18:08:49.613 [main] DEBUG nextflow.cli.CmdRun - Launching `/lab_nas_home_user/Mark/FSHD/nf-fshd/main.nf` [cheeky_gutenberg] DSL2 - revision: 762ea7e118
+Mar-16 18:08:49.663 [main] DEBUG nextflow.Session - Session UUID: 6f9fd398-ae4f-4188-a59b-aa120bd1ad96
+Mar-16 18:08:49.663 [main] DEBUG nextflow.Session - Run name: cheeky_gutenberg
+Mar-16 18:08:49.664 [main] DEBUG nextflow.Session - Executor pool size: 96
+Mar-16 18:08:49.672 [main] DEBUG nextflow.file.FilePorter - File porter settings maxRetries=3; maxTransfers=50; pollTimeout=null
+Mar-16 18:08:49.678 [main] DEBUG nextflow.util.ThreadPoolBuilder - Creating thread pool 'FileTransfer' minSize=10; maxSize=288; workQueue=LinkedBlockingQueue[-1]; allowCoreThreadTimeout=false
+Mar-16 18:08:49.697 [main] DEBUG nextflow.cli.CmdRun - 
+  Version: 25.10.4 build 11173
+  Created: 10-02-2026 15:17 UTC (23:17 CDT)
+  System: Linux 6.8.0-87-generic
+  Runtime: Groovy 4.0.28 on OpenJDK 64-Bit Server VM 23.0.2-internal-adhoc.conda.src
+  Encoding: UTF-8 (UTF-8)
+  Process: 905201@gs2040t [127.0.1.1]
+  CPUs: 96 - Mem: 2 TB (263.3 GB) - Swap: 8 GB (8 GB)
+Mar-16 18:08:49.761 [main] DEBUG nextflow.Session - Work-dir: /raid/nf/tmp [ext2/ext3]
+Mar-16 18:08:49.763 [main] DEBUG nextflow.Session - Script base path does not exist or is not a directory: /lab_nas_home_user/Mark/FSHD/nf-fshd/bin
+Mar-16 18:08:49.775 [main] DEBUG nextflow.executor.ExecutorFactory - Extension executors providers=[]
+Mar-16 18:08:49.785 [main] DEBUG nextflow.Session - Observer factory (v2): LinObserverFactory
+Mar-16 18:08:49.787 [main] DEBUG nextflow.Session - Observer factory (v2): DefaultObserverFactory
+Mar-16 18:08:49.854 [main] DEBUG nextflow.cache.CacheFactory - Using Nextflow cache factory: nextflow.cache.DefaultCacheFactory
+Mar-16 18:08:49.863 [main] DEBUG nextflow.util.CustomThreadPool - Creating default thread pool > poolSize: 97; maxThreads: 1000
+Mar-16 18:08:49.917 [main] DEBUG nextflow.Session - Session start
+Mar-16 18:08:50.513 [main] DEBUG nextflow.script.ScriptRunner - > Launching execution
+Mar-16 18:08:50.664 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Mar-16 18:08:50.665 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Mar-16 18:08:50.680 [main] DEBUG nextflow.executor.Executor - [warm up] executor > local
+Mar-16 18:08:50.701 [main] DEBUG n.processor.LocalPollingMonitor - Creating local task monitor for executor 'local' > cpus=67; memory=1.2 TB; capacity=96; pollInterval=100ms; dumpInterval=5m
+Mar-16 18:08:50.703 [main] DEBUG n.processor.TaskPollingMonitor - >>> barrier register (monitor: local)
+Mar-16 18:08:50.731 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'EXTRACT_FSHD_READS': maxForks=0; fair=false; array=0
+Mar-16 18:08:50.796 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Mar-16 18:08:50.796 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Mar-16 18:08:50.798 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'REALIGN_T2T': maxForks=0; fair=false; array=0
+Mar-16 18:08:50.803 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Mar-16 18:08:50.803 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Mar-16 18:08:50.804 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'EXTRACT_D4Z4': maxForks=0; fair=false; array=0
+Mar-16 18:08:50.815 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Mar-16 18:08:50.815 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Mar-16 18:08:50.816 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'BLAST_ANALYSIS': maxForks=0; fair=false; array=0
+Mar-16 18:08:50.825 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Mar-16 18:08:50.825 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Mar-16 18:08:50.826 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'METHYLATION': maxForks=0; fair=false; array=0
+Mar-16 18:08:50.833 [main] DEBUG nextflow.executor.ExecutorFactory - << taskConfig executor: null
+Mar-16 18:08:50.833 [main] DEBUG nextflow.executor.ExecutorFactory - >> processorType: 'local'
+Mar-16 18:08:50.834 [main] DEBUG nextflow.processor.TaskProcessor - Creating process 'REPORT': maxForks=0; fair=false; array=0
+Mar-16 18:08:50.837 [main] DEBUG nextflow.Session - Workflow process names [dsl2]: METHYLATION, EXTRACT_FSHD_READS, REALIGN_T2T, BLAST_ANALYSIS, EXTRACT_D4Z4, REPORT
+Mar-16 18:08:50.840 [main] DEBUG nextflow.Session - Igniting dataflow network (6)
+Mar-16 18:08:50.841 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > EXTRACT_FSHD_READS
+Mar-16 18:08:50.843 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > REALIGN_T2T
+Mar-16 18:08:50.843 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > EXTRACT_D4Z4
+Mar-16 18:08:50.844 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > BLAST_ANALYSIS
+Mar-16 18:08:50.844 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > METHYLATION
+Mar-16 18:08:50.845 [main] DEBUG nextflow.processor.TaskProcessor - Starting process > REPORT
+Mar-16 18:08:50.846 [main] DEBUG nextflow.script.ScriptRunner - Parsed script files:
+  Script_fd1f069acba23940: /lab_nas_home_user/Mark/FSHD/nf-fshd/main.nf
+Mar-16 18:08:50.846 [main] DEBUG nextflow.script.ScriptRunner - > Awaiting termination 
+Mar-16 18:08:50.846 [main] DEBUG nextflow.Session - Session await
+Mar-16 18:08:51.113 [Task submitter] DEBUG n.executor.local.LocalTaskHandler - Launch cmd line: /bin/bash -ue .command.run
+Mar-16 18:08:51.115 [Task submitter] INFO  nextflow.Session - [7f/290266] Submitted process > EXTRACT_FSHD_READS
+Mar-16 18:09:02.738 [Task monitor] DEBUG n.processor.TaskPollingMonitor - Task completed > TaskHandler[id: 1; name: EXTRACT_FSHD_READS; status: COMPLETED; exit: 0; error: -; workDir: /raid/nf/tmp/7f/290266cf429dda2cb4b6047deecf6c]
+Mar-16 18:09:02.741 [Task monitor] DEBUG nextflow.util.ThreadPoolBuilder - Creating thread pool 'TaskFinalizer' minSize=10; maxSize=288; workQueue=LinkedBlockingQueue[-1]; allowCoreThreadTimeout=false
+Mar-16 18:09:02.810 [Task submitter] DEBUG n.executor.local.LocalTaskHandler - Launch cmd line: /bin/bash -ue .command.run
+Mar-16 18:09:02.811 [Task submitter] INFO  nextflow.Session - [ac/e65f75] Submitted process > REALIGN_T2T
+Mar-16 18:09:56.771 [Task monitor] DEBUG n.processor.TaskPollingMonitor - Task completed > TaskHandler[id: 2; name: REALIGN_T2T; status: COMPLETED; exit: 0; error: -; workDir: /raid/nf/tmp/ac/e65f758e99ffaf819278c7ec21d7ac]
+Mar-16 18:09:56.816 [Task submitter] DEBUG n.executor.local.LocalTaskHandler - Launch cmd line: /bin/bash -ue .command.run
+Mar-16 18:09:56.817 [Task submitter] INFO  nextflow.Session - [00/486b9e] Submitted process > EXTRACT_D4Z4
+Mar-16 18:09:57.480 [Task monitor] DEBUG n.processor.TaskPollingMonitor - Task completed > TaskHandler[id: 3; name: EXTRACT_D4Z4; status: COMPLETED; exit: 0; error: -; workDir: /raid/nf/tmp/00/486b9e9af6913f67a00c1ae9289a1c]
+Mar-16 18:09:57.509 [TaskFinalizer-3] DEBUG nextflow.util.ThreadPoolBuilder - Creating thread pool 'PublishDir' minSize=10; maxSize=288; workQueue=LinkedBlockingQueue[-1]; allowCoreThreadTimeout=false
+Mar-16 18:09:57.530 [Task submitter] DEBUG n.executor.local.LocalTaskHandler - Launch cmd line: /bin/bash -ue .command.run
+Mar-16 18:09:57.531 [Task submitter] INFO  nextflow.Session - [8a/daa0f4] Submitted process > BLAST_ANALYSIS
+Mar-16 18:10:04.098 [Task monitor] DEBUG n.processor.TaskPollingMonitor - Task completed > TaskHandler[id: 4; name: BLAST_ANALYSIS; status: COMPLETED; exit: 0; error: -; workDir: /raid/nf/tmp/8a/daa0f4ac9ae4048e89aee95e30500c]
+Mar-16 18:10:04.423 [Task submitter] DEBUG n.executor.local.LocalTaskHandler - Launch cmd line: /bin/bash -ue .command.run
+Mar-16 18:10:04.424 [Task submitter] INFO  nextflow.Session - [d9/65b1a1] Submitted process > METHYLATION
+Mar-16 18:10:46.866 [Task monitor] DEBUG n.processor.TaskPollingMonitor - Task completed > TaskHandler[id: 5; name: METHYLATION; status: COMPLETED; exit: 0; error: -; workDir: /raid/nf/tmp/d9/65b1a1b00a07c7cb4254cfec69ef59]
+Mar-16 18:10:46.896 [Task submitter] DEBUG n.executor.local.LocalTaskHandler - Launch cmd line: /bin/bash -ue .command.run
+Mar-16 18:10:46.897 [Task submitter] INFO  nextflow.Session - [f0/83fe88] Submitted process > REPORT
+Mar-16 18:10:50.331 [Task monitor] DEBUG n.processor.TaskPollingMonitor - Task completed > TaskHandler[id: 6; name: REPORT; status: COMPLETED; exit: 0; error: -; workDir: /raid/nf/tmp/f0/83fe880bcb867fb5383268b744d2b3]
+Mar-16 18:10:50.347 [main] DEBUG nextflow.Session - Session await > all processes finished
+Mar-16 18:10:50.434 [Task monitor] DEBUG n.processor.TaskPollingMonitor - <<< barrier arrives (monitor: local) - terminating tasks monitor poll loop
+Mar-16 18:10:50.434 [main] DEBUG nextflow.Session - Session await > all barriers passed
+Mar-16 18:10:50.444 [main] DEBUG nextflow.util.ThreadPoolManager - Thread pool 'TaskFinalizer' shutdown completed (hard=false)
+Mar-16 18:10:50.517 [main] DEBUG nextflow.util.ThreadPoolManager - Thread pool 'PublishDir' shutdown completed (hard=false)
+Mar-16 18:10:50.538 [main] DEBUG n.trace.WorkflowStatsObserver - Workflow completed > WorkflowStats[succeededCount=6; failedCount=0; ignoredCount=0; cachedCount=0; pendingCount=0; submittedCount=0; runningCount=0; retriesCount=0; abortedCount=0; succeedDuration=39m 26s; failedDuration=0ms; cachedDuration=0ms;loadCpus=0; loadMemory=0; peakRunning=1; peakCpus=20; peakMemory=64 GB; ]
+Mar-16 18:10:50.768 [main] DEBUG nextflow.cache.CacheDB - Closing CacheDB done
+Mar-16 18:10:50.789 [main] DEBUG nextflow.util.ThreadPoolManager - Thread pool 'FileTransfer' shutdown completed (hard=false)
+Mar-16 18:10:50.789 [main] DEBUG nextflow.script.ScriptRunner - > Execution complete -- Goodbye

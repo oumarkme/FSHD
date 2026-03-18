@@ -8,7 +8,7 @@ A Nextflow DSL2 pipeline for FSHD diagnosis from hg38-aligned ONT BAM/CRAM files
 
 ### D4Z4 and FSHD
 
-The D4Z4 macrosatellite array on chromosome 4q35 consists of tandem 3.3 kb repeat units. Healthy individuals carry 11–100+ RU per allele. FSHD1 occurs when one allele contracts to 1–10 RU **on a permissive haplotype background** (4qA or 4qA-L), which stabilizes DUX4 mRNA via a polyadenylation signal (PAS) in the pLAM region distal to the array.
+The D4Z4 macrosatellite array on chromosome 4q35 consists of tandem 3.3 kb repeat units. Healthy individuals carry 11–100+ RU per allele. FSHD1 occurs when one allele contracts to 1–10 RU **on a permissive haplotype background** (4qA or 4qA-L), which stabilizes DUX4 mRNA via a polyadenylation signal (PAS) in the pLAM region distal to the array (Lemmers et al., 2012).
 
 ### Haplotype backgrounds
 
@@ -19,7 +19,7 @@ The D4Z4 macrosatellite array on chromosome 4q35 consists of tandem 3.3 kb repea
 | **4qB** | No | Lacks pLAM entirely; DUX4 mRNA unstable | ~50% of chr4 alleles |
 | **10qA** | No | 98.5% identity to 4qA but non-functional PAS (SNPs) | Most chr10 alleles |
 
-Only contractions on 4qA or 4qA-L cause FSHD1. Contractions on 4qB are clinically silent.
+Only contractions on 4qA or 4qA-L cause FSHD1. Contractions on 4qB are clinically silent (Lemmers et al., 2012).
 
 ### D4Z4 array sizes
 
@@ -55,7 +55,7 @@ A read is **"complete"** when it contains both the proximal p13E-11 anchor AND t
 
 ### HP tag reliability
 
-- HP tags from WhatsHap are reliable in unique flanking regions adjacent to D4Z4
+- HP tags are reliable in unique flanking regions adjacent to D4Z4
 - Within the D4Z4 array: very few heterozygous SNPs → phasing may fail
 - Most D4Z4 reads carry HP tags inherited from flanking-region phasing, but some reads (especially those entirely within the array) may lack HP tags
 
@@ -69,7 +69,7 @@ A read is **"complete"** when it contains both the proximal p13E-11 anchor AND t
 ### Flye assembly caveats
 
 - Minimum ~10× coverage; 30–40× recommended. Per-allele coverage at D4Z4 is typically 4–12× (marginal)
-- Flye may collapse identical D4Z4 copies, underestimating RU count
+- Flye may collapse identical D4Z4 copies, underestimating RU count (Kolmogorov et al., 2019)
 - Resolution: take whichever has MORE RUs — assembly or longest raw read
 
 ---
@@ -117,7 +117,7 @@ HP is always preferred when available — it uses flanking-region SNPs and doesn
 
 ### Phase 2: Assign unphased reads
 
-Complete reads (Has_Head AND Has_Tail) span the full array and **can only come from the shorter allele** (biological constraint: healthy alleles ≥11 RU exceed ONT N50).
+Complete reads (Has_Head AND Has_Tail) span the full array and **can only come from the shorter allele** (biological constraint: healthy alleles ≥11 RU exceed ONT N50; Huang et al., 2024).
 
 ```
 IF no complete reads:
@@ -239,6 +239,8 @@ Published output: `{SAMPLE_ID}.d4z4.bam` + `.bai`
 
 ### Step 4: Chromosome assignment and feature annotation (BLAST_ANNOTATE)
 
+BLAST-based feature annotation following the approach of Lowenstern et al. (2026) and Huang et al. (2024):
+
 ```
 blastn d4z4.fa       -> RU counting (hits > 1500 bp)
 blastn pLAM-polyA.fa -> distal anchor + 4qA/10qA haplotype
@@ -257,7 +259,7 @@ Three-phase algorithm: Phase 1 (separate by HP/RU-anchor/Jenks), Phase 2 (assign
 
 ### Step 6: Read-level counting (READLEVEL_COUNT)
 
-For alleles with complete reads: extract spanning reads → Racon consensus (if ≥3 reads) → BLAST RU count.
+For alleles with complete reads: extract spanning reads → Racon consensus (Vaser et al., 2017; if ≥3 reads) → BLAST RU count. This approach follows D4Z4End2End (Xiao et al., 2025).
 
 ### Step 7: Assembly-based counting (ASSEMBLY_COUNT)
 
@@ -367,8 +369,8 @@ One row per (Allele, Haplotype, Complete) group. RU_Count is the max within each
 | Region | DR1 or DUX4-PAS |
 | Methylation | Mean % modified across CpGs in region |
 | N_CpG | Number of CpGs with data |
-| Ref_Atlas (Mean (SD) %) | ONT methylation reference atlas (~45–49 healthy controls) |
-| Lit_Caputo (%) | Diagnostic threshold from Caputo et al. 2022 |
+| Ref_Atlas (Mean (SD) %) | ONT methylation reference atlas (~45–49 healthy controls; Huang et al., 2024) |
+| Lit_Caputo (%) | Diagnostic threshold (Caputo et al., 2022; Strafella et al., 2024) |
 
 **Reference values (T2T coordinates):**
 
@@ -387,26 +389,26 @@ bash nf-fshd/run.sh /path/to/sample.bam
 
 The `run.sh` script auto-detects the environment, builds the Apptainer container if needed, and launches Nextflow with `-resume`.
 
-**Input:** hg38-aligned BAM/CRAM with HP/PS tags (from WhatsHap) and MM/ML tags (from Dorado).
+**Input:** hg38-aligned BAM/CRAM with HP/PS tags (from any phasing tool) and MM/ML tags (from basecalling).
 
 ---
 
 ## Upstream prerequisites
 
-These steps are performed outside this pipeline:
+These steps are performed outside this pipeline. The pipeline input is an hg38-aligned BAM/CRAM carrying both methylation tags (MM/ML) from basecalling and haplotype tags (HP/PS) from phasing. Any phasing tool that writes standard HP/PS tags is compatible.
 
-| Step | Tool | Output |
-|------|------|--------|
-| Basecalling | Dorado ≥0.7.0 (SUP + `--modified-bases 5mCG_5hmCG`) | Unaligned modBAM |
-| Genome-wide alignment | minimap2 | hg38-aligned BAM |
-| SNP calling | Clair3 ≥1.0.10 | VCF |
-| Phasing + haplotagging | WhatsHap ≥2.0 | BAM with HP/PS tags |
+| Step | Tool | Version | Output | Reference |
+|------|------|---------|--------|-----------|
+| Basecalling | Dorado (SUP + `--modified-bases 5mCG_5hmCG`) | ≥0.7.0 | Unaligned modBAM with MM/ML tags | Oxford Nanopore Technologies (2024b) |
+| Genome-wide alignment | minimap2 (`-ax lr:hq`) | ≥2.28 | hg38-aligned BAM | Li (2018) |
+| Variant calling | e.g., Clair3 | — | VCF (SNPs for phasing) | Zheng et al. (2022) |
+| Phasing + haplotagging | e.g., LongPhase, WhatsHap | — | BAM with HP/PS tags | Lin et al. (2022); Martin et al. (2023) |
 
 ---
 
 ## Reference genome and query sequences
 
-**Reference:** T2T-CHM13v2.0 (`GCF_009914755.1_T2T-CHM13v2.0_genomic.fna`)
+**Reference:** T2T-CHM13v2.0 (Nurk et al., 2022; `GCF_009914755.1_T2T-CHM13v2.0_genomic.fna`)
 
 **Key T2T-CHM13v2.0 coordinates:**
 
@@ -429,19 +431,28 @@ These steps are performed outside this pipeline:
 
 ## Software
 
-### In container (`environment.sif`)
+### Container (`environment.sif`, built from `environment.def`)
 
-| Tool | Version | Purpose |
-|------|---------|---------|
-| Python | 3.12 | Scripting (pandas, pysam, jenkspy) |
-| samtools | 1.23 | BAM manipulation |
-| minimap2 | 2.30 | Alignment |
-| BLAST+ | 2.17.0 | RU counting, anchor detection, haplotyping |
-| modkit | 0.6.1 | CpG methylation |
-| Flye | 2.9.6 | Local assembly |
-| Racon | 1.5.0 | Consensus polishing |
-| seqkit | 2.13.0 | FASTA manipulation |
-| jenkspy | 0.4.1 | Jenks natural breaks (fallback allele separation) |
+| Tool | Version | Purpose | Reference |
+|------|---------|---------|-----------|
+| Python | 3.12 | Scripting runtime | |
+| samtools | 1.23 | BAM/CRAM extraction, sort, index, merge, FASTQ conversion | Danecek et al. (2021) |
+| minimap2 | 2.30 | T2T realignment; alignment-based unphased read assignment | Li (2018) |
+| BLAST+ | 2.17.0 | RU counting, anchor detection, haplotyping, chromosome assignment | Camacho et al. (2009) |
+| modkit | 0.6.1 | Phased CpG methylation pileup | Oxford Nanopore Technologies (2024a) |
+| Flye | 2.9.6 | Per-allele local assembly | Kolmogorov et al. (2019) |
+| Racon | 1.5.0 | Consensus polishing from spanning reads | Vaser et al. (2017) |
+| seqkit | 2.13.0 | FASTA extraction and sorting | Shen et al. (2016) |
+| pysam | 0.23.3 | BAM read iteration and HP tag extraction in Python | |
+| pandas | 3.0.1 | Tabular data processing and report generation | |
+| jenkspy | 0.4.1 | Jenks natural breaks for fallback allele separation | |
+
+### Runtime requirements (host)
+
+| Tool | Purpose | Reference |
+|------|---------|-----------|
+| Nextflow | Workflow engine (DSL2) | Di Tommaso et al. (2017) |
+| Apptainer | Container runtime for `environment.sif` | Kurtzer et al. (2017) |
 
 ---
 
@@ -455,7 +466,7 @@ These steps are performed outside this pipeline:
 
 4. **Methylation coverage.** At 30× WGS, per-allele methylation coverage may be only 3–5 reads. ≥60× recommended for clinical-grade calls.
 
-5. **CHM13 reference gap for 4qA.** T2T-CHM13v2.0 carries 4qB on chr4. 4qA-specific pLAM/PAS is absent from the reference. BLAST-based annotation detects pLAM in read sequence directly.
+5. **CHM13 reference gap for 4qA.** T2T-CHM13v2.0 carries 4qB on chr4 (Nurk et al., 2022). 4qA-specific pLAM/PAS is absent from the reference. BLAST-based annotation detects pLAM in read sequence directly.
 
 6. **Somatic mosaicism.** Mosaic samples may show multiple RU count clusters from the same allele. The pipeline does not explicitly detect mosaicism but unusual clustering patterns should be flagged for review.
 
@@ -465,9 +476,50 @@ These steps are performed outside this pipeline:
 
 ## References
 
-- Caputo V et al. (2022) Methylation thresholds for FSHD diagnosis. *Clin Epigenetics*.
-- Caputo V et al. (2024) Updated FSHD methylation analysis.
-- Lemmers RJLF et al. (2015) D4Z4 methylation and FSHD2. *Hum Mutat*.
-- Löwenstern A et al. (2026) DUCKS4 pipeline. *Hum Genomics*. github.com/tamara-nano/ducks4
-- Xiao L et al. (2025) D4Z4End2End. *Genome Res*. github.com/lucindaxiao/D4Z4End2End
-- Huang Y et al. (2024) ONT WGS for FSHD with 100% OGM concordance. *J Transl Med*.
+### FSHD biology and clinical
+
+Caputo, V., Megalizzi, D., Fabrizio, C., Termine, A., Colantoni, L., Bax, C., Gimenez, J., Monforte, M., Tasca, G., Ricci, E., Caltagirone, C., Giardina, E., Cascella, R., & Strafella, C. (2022). D4Z4 methylation levels combined with a machine learning pipeline highlight single CpG sites as discriminating biomarkers for FSHD patients. *Cells*, *11*(24), Article 4114. https://doi.org/10.3390/cells11244114
+
+Lemmers, R. J. L. F., Tawil, R., Petek, L. M., Balog, J., Block, G. J., Santen, G. W. E., Amell, A. M., van der Vliet, P. J., Almomani, R., Straasheijm, K. R., Krom, Y. D., Klooster, R., Sun, Y., den Dunnen, J. T., Helmer, Q., Donlin-Smith, C. M., Padberg, G. W., van Engelen, B. G. M., de Greef, J. C., ... van der Maarel, S. M. (2012). Digenic inheritance of an SMCHD1 mutation and an FSHD-permissive D4Z4 allele causes facioscapulohumeral muscular dystrophy type 2. *Nature Genetics*, *44*(12), 1370–1374. https://doi.org/10.1038/ng.2454
+
+Strafella, C., Megalizzi, D., Trastulli, G., Proietti Piorgo, E., Colantoni, L., Tasca, G., Monforte, M., Zampatti, S., Primiano, G., Sancricca, C., Bortolani, S., Torchia, E., Ravera, B., Torri, F., Gadaleta, G., Risi, B., Caria, F., Gerardi, F., Carraro, E., ... Giardina, E. (2024). Integrating D4Z4 methylation analysis into clinical practice: Improvement of FSHD molecular diagnosis through distinct thresholds for 4qA/4qA and 4qA/4qB patients. *Clinical Epigenetics*, *16*, Article 148. https://doi.org/10.1186/s13148-024-01747-2
+
+### FSHD long-read pipelines
+
+Huang, M., Zhang, Q., Jiao, J., Shi, J., Xu, Y., Zhang, C., Zhou, R., Liu, W., Liang, Y., Chen, H., Wang, Y., Xu, Z., & Hu, P. (2024). Comprehensive genetic analysis of facioscapulohumeral muscular dystrophy by Nanopore long-read whole-genome sequencing. *Journal of Translational Medicine*, *22*, Article 451. https://doi.org/10.1186/s12967-024-05259-8
+
+Lowenstern, T., Madritsch, S., Horner, D., Brait, N., Lafci, N. G., Schachner, A., Bujalkova, M. G., Hengstschlager, M., Dremsek, P., & Laccone, F. (2026). DUCKS4: A comprehensive workflow for Nanopore sequencing analysis of facioscapulohumeral muscular dystrophy (FSHD). *Human Genomics*, *20*, Article 21. https://doi.org/10.1186/s40246-026-00921-2
+
+Xiao, L. C., Semwal, A., St John, B., Zeglinski, K., Su, S., Lancaster, J., Xue, S., Reversade, B., Ritchie, M. E., Magdinier, F., Blewitt, M. E., & Gouil, Q. (2025). D4Z4End2End: Complete genetic and epigenetic architecture of D4Z4 macrosatellites in FSHD, BAMS and reference cohorts. *medRxiv*. https://doi.org/10.1101/2025.04.24.25326320
+
+### Reference genome
+
+Nurk, S., Koren, S., Rhie, A., Rautiainen, M., Bzikadze, A. V., Mikheenko, A., Vollger, M. R., Altemose, N., Uralsky, L., Gershman, A., Aganezov, S., Hoyt, S. J., Diekhans, M., Logsdon, G. A., Alonge, M., Antonarakis, S. E., Borchers, M., Bouffard, G. G., Brooks, S. Y., ... Phillippy, A. M. (2022). The complete sequence of a human genome. *Science*, *376*(6588), 44–53. https://doi.org/10.1126/science.abj6987
+
+### Bioinformatics tools
+
+Camacho, C., Coulouris, G., Avagyan, V., Ma, N., Papadopoulos, J., Bealer, K., & Madden, T. L. (2009). BLAST+: Architecture and applications. *BMC Bioinformatics*, *10*, Article 421. https://doi.org/10.1186/1471-2105-10-421
+
+Danecek, P., Bonfield, J. K., Liddle, J., Marshall, J., Ohan, V., Pollard, M. O., Whitwham, A., Keane, T., McCarthy, S. A., Davies, R. M., & Li, H. (2021). Twelve years of SAMtools and BCFtools. *GigaScience*, *10*(2), Article giab008. https://doi.org/10.1093/gigascience/giab008
+
+Di Tommaso, P., Chatzou, M., Floden, E. W., Barja, P. P., Palumbo, E., & Notredame, C. (2017). Nextflow enables reproducible computational workflows. *Nature Biotechnology*, *35*(4), 316–319. https://doi.org/10.1038/nbt.3820
+
+Kolmogorov, M., Yuan, J., Lin, Y., & Pevzner, P. A. (2019). Assembly of long, error-prone reads using repeat graphs. *Nature Biotechnology*, *37*(5), 540–546. https://doi.org/10.1038/s41587-019-0072-8
+
+Kurtzer, G. M., Sochat, V., & Bauer, M. W. (2017). Singularity: Scientific containers for mobility of compute. *PLOS ONE*, *12*(5), Article e0177459. https://doi.org/10.1371/journal.pone.0177459
+
+Li, H. (2018). Minimap2: Pairwise alignment for nucleotide sequences. *Bioinformatics*, *34*(18), 3094–3100. https://doi.org/10.1093/bioinformatics/bty191
+
+Lin, J.-H., Chen, L.-C., Yu, S.-C., & Huang, Y.-T. (2022). LongPhase: An ultra-fast chromosome-scale phasing algorithm for small and large variants. *Bioinformatics*, *38*(7), 1816–1822. https://doi.org/10.1093/bioinformatics/btac058
+
+Martin, M., Patterson, M., Garg, S., Fischer, S. O., Pisanti, N., Klau, G. W., Schonhuth, A., & Marschall, T. (2023). Read-based phasing and analysis of phased variants with WhatsHap. In *Methods in Molecular Biology* (Vol. 2590, pp. 127–138). Springer. https://doi.org/10.1007/978-1-0716-2819-5_8
+
+Oxford Nanopore Technologies. (2024a). *Modkit* [Computer software]. https://github.com/nanoporetech/modkit
+
+Oxford Nanopore Technologies. (2024b). *Dorado* [Computer software]. https://github.com/nanoporetech/dorado
+
+Shen, W., Le, S., Li, Y., & Hu, F. (2016). SeqKit: A cross-platform and ultrafast toolkit for FASTA/Q file manipulation. *PLOS ONE*, *11*(10), Article e0163962. https://doi.org/10.1371/journal.pone.0163962
+
+Vaser, R., Sovic, I., Nagarajan, N., & Sikic, M. (2017). Fast and accurate de novo genome assembly from long uncorrected reads. *Genome Research*, *27*(5), 737–746. https://doi.org/10.1101/gr.214270.116
+
+Zheng, Z., Li, S., Su, J., Leung, A. W.-S., Lam, T.-W., & Luo, R. (2022). Symphonizing pileup and full-alignment for deep learning-based long-read variant calling. *Nature Computational Science*, *2*(12), 797–803. https://doi.org/10.1038/s43588-022-00387-x

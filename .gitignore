@@ -1,2 +1,8 @@
 # Old unrelated project
 archive/
+
+# Apptainer/Singularity images
+nf-fshd/*.sif
+
+# Runtime logs
+*.log

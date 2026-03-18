@@ -1,23 +1,19 @@
 #!/bin/bash
 set -euo pipefail
 
-# Detect environment and set conda PATH + JAVA_HOME
-# WSL has /home/mark, GS4 has /home/user
-if [[ -d "/home/mark/miniforge3" ]]; then
-    CONDA_DIR="/home/mark/miniforge3/envs/mark"
-    PROFILE="wsl"
-else
-    CONDA_DIR="/home/user/miniforge-pypy3/envs/mark"
-    PROFILE="gs4"
-fi
-
+# GS4 server environment
+CONDA_DIR="/home/user/miniforge-pypy3/envs/mark"
 export PATH="${CONDA_DIR}/bin:$PATH"
 export JAVA_HOME="${CONDA_DIR}"
 export JAVA_CMD="${CONDA_DIR}/bin/java"
 
-# Require input file as argument
+# Require input BAM/CRAM file
 if [[ $# -lt 1 ]]; then
     echo "Usage: bash run.sh <input.bam|cram> [extra nextflow args...]"
+    echo ""
+    echo "Examples:"
+    echo "  bash run.sh /raid/data/sample1.bam"
+    echo "  bash run.sh /raid/data/sample1.bam -resume"
     exit 1
 fi
 
@@ -38,10 +34,8 @@ fi
 # Clean old Nextflow log files
 rm -f "$SCRIPT_DIR"/*log*
 
-
 # Run pipeline
 nextflow -log "$SCRIPT_DIR/nf-fshd.log" run "$SCRIPT_DIR/main.nf" \
-    -profile "$PROFILE" \
     --input "$INPUT" \
     -resume \
     "$@"

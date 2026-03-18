@@ -14,9 +14,9 @@ The D4Z4 macrosatellite array on chromosome 4q35 consists of tandem 3.3 kb repea
 
 | Haplotype | Permissive? | Key feature | Population freq |
 |-----------|-------------|-------------|-----------------|
-| **4qA** (includes 4A161) | Yes | Contains pLAM with functional DUX4 PAS (ATTAAA) | ~50% of chr4 alleles |
-| **4qA-L** (4A161L) | Yes | 1.6 kb longer distal partial D4Z4 unit; functional PAS | ~20% of European 4A161 alleles |
-| **4qB** | No | Lacks pLAM entirely; DUX4 mRNA unstable | ~50% of chr4 alleles |
+| **4qA** (includes 4A161) | Yes | Contains pLAM with functional DUX4 PAS (ATTAAA) | \~50% of chr4 alleles |
+| **4qA-L** (4A161L) | Yes | 1.6 kb longer distal partial D4Z4 unit; functional PAS | \~20% of European 4A161 alleles |
+| **4qB** | No | Lacks pLAM entirely; DUX4 mRNA unstable | \~50% of chr4 alleles |
 | **10qA** | No | 98.5% identity to 4qA but non-functional PAS (SNPs) | Most chr10 alleles |
 
 Only contractions on 4qA or 4qA-L cause FSHD1. Contractions on 4qB are clinically silent (Lemmers et al., 2012).
@@ -27,7 +27,7 @@ Only contractions on 4qA or 4qA-L cause FSHD1. Contractions on 4qB are clinicall
 |----------|-----------|----------------------|
 | 1–3 | 3.3–10 kb | Severe/infantile FSHD1 (high penetrance) |
 | 4–7 | 13–23 kb | Classic FSHD1 (variable expressivity) |
-| 8–10 | 26–33 kb | Borderline; reduced penetrance (~40–50%); requires methylation |
+| 8–10 | 26–33 kb | Borderline; reduced penetrance (\~40–50%); requires methylation |
 | 11–20 | 36–66 kb | Normal; may contribute to FSHD2 if modifier present |
 | 21–100+ | 69–330+ kb | Normal/healthy |
 
@@ -40,18 +40,18 @@ Only contractions on 4qA or 4qA-L cause FSHD1. Contractions on 4qB are clinicall
 | Parameter | Standard ligation (LSK114, with size selection) | Ultra-long (ULK114) |
 |-----------|------------------------------------------------|---------------------|
 | Typical N50 | 25–30 kb | 50–100+ kb |
-| Max reliable spanning | ~7–8 RU (~26 kb) | ~15–20 RU |
+| Max reliable spanning | \~7–8 RU (\~26 kb) | \~15–20 RU |
 | Marginal spanning | 9–10 RU (~33 kb) | 20–30 RU |
 | Never spanned | ≥11 RU (≥36 kb) | ≥30 RU |
 
-A read is **"complete"** when it contains both the proximal p13E-11 anchor AND the distal pLAM anchor. With standard N50 ~25–30 kb, complete reads can only come from alleles with ≤~10 RU. Healthy alleles (≥11 RU) will never produce complete reads with standard prep.
+A read is **"complete"** when it contains both the proximal p13E-11 anchor AND the distal pLAM anchor. With standard N50 \~25–30 kb, complete reads can only come from alleles with ≤\~10 RU. Healthy alleles (≥11 RU) will never produce complete reads with standard prep.
 
 ### Coverage per allele
 
 | Genome coverage | Reads per allele (theoretical) | Effective (subtelomeric penalty) |
 |-----------------|-------------------------------|----------------------------------|
-| 30× | ~7–8× | ~4–6× |
-| 60× | ~15× | ~10–12× |
+| 30× | \~7–8× | \~4–6× |
+| 60× | \~15× | \~10–12× |
 
 ### HP tag reliability
 
@@ -61,14 +61,14 @@ A read is **"complete"** when it contains both the proximal p13E-11 anchor AND t
 
 ### Chr4 vs chr10 discrimination
 
-- D4Z4 arrays share ~98.5–99% identity between chr4 and chr10
+- D4Z4 arrays share \~98.5–99% identity between chr4 and chr10
 - Discrimination relies on unique flanking sequences and a chr10-specific BlnI restriction site within D4Z4 units
 - Reads must extend into flanking regions for reliable chromosome assignment
 - Haplotype detection (4qA vs 10qA) requires reads extending past the last D4Z4 unit to detect pLAM
 
 ### Flye assembly caveats
 
-- Minimum ~10× coverage; 30–40× recommended. Per-allele coverage at D4Z4 is typically 4–12× (marginal)
+- Minimum \~10× coverage; 30–40× recommended. Per-allele coverage at D4Z4 is typically 4–12× (marginal)
 - Flye may collapse identical D4Z4 copies, underestimating RU count (Kolmogorov et al., 2019)
 - Resolution: take whichever has MORE RUs — assembly or longest raw read
 
@@ -369,7 +369,7 @@ One row per (Allele, Haplotype, Complete) group. RU_Count is the max within each
 | Region | DR1 or DUX4-PAS |
 | Methylation | Mean % modified across CpGs in region |
 | N_CpG | Number of CpGs with data |
-| Ref_Atlas (Mean (SD) %) | ONT methylation reference atlas (~45–49 healthy controls; Huang et al., 2024) |
+| Ref_Atlas (Mean (SD) %) | ONT methylation reference atlas (\~45–49 healthy controls; Huang et al., 2024) |
 | Lit_Caputo (%) | Diagnostic threshold (Caputo et al., 2022; Strafella et al., 2024) |
 
 **Reference values (T2T coordinates):**
@@ -414,16 +414,16 @@ These steps are performed outside this pipeline. The pipeline input is an hg38-a
 
 | Region | Coordinates | Notes |
 |--------|------------|-------|
-| Chr4 D4Z4 array | chr4:193,282,466–193,558,261 | ~276 kb; 33 RUs in reference |
+| Chr4 D4Z4 array | chr4:193,282,466–193,558,261 | \~276 kb; 33 RUs in reference |
 | Chr4 DUX4 methylation target | chr4:193,540,172–193,543,634 | Distal D4Z4 + DUX4 promoter/coding |
 | Chr4 p13E-11 anchor | chr4:192,667,301–192,902,247 | Upstream unique anchoring region |
-| Chr10 D4Z4 array | chr10:134,615,120–134,741,148 | ~126 kb |
+| Chr10 D4Z4 array | chr10:134,615,120–134,741,148 | \~126 kb |
 
 **Query sequences (`nf-fshd/query/`):**
 
 | File | Purpose |
 |------|---------|
-| `d4z4.fa` | Single D4Z4 RU (~3.3 kb) for RU counting |
+| `d4z4.fa` | Single D4Z4 RU (\~3.3 kb) for RU counting |
 | `pLAM-polyA.fa` | hapA (4qA ATTAAA PAS) / hapB (10qA ATCAAA PAS) for haplotype + distal anchor; 4qB has no pLAM |
 | `P13E11.fasta` | p13E-11 probe for proximal anchor |
 
@@ -458,9 +458,9 @@ These steps are performed outside this pipeline. The pipeline input is an hg38-a
 
 ## Known limitations
 
-1. **Read length constraint.** At N50 ~25–30 kb, complete reads are limited to alleles ≤~10 RU. Ultra-long prep extends this range but is not standard.
+1. **Read length constraint.** At N50 \~25–30 kb, complete reads are limited to alleles ≤\~10 RU. Ultra-long prep extends this range but is not standard.
 
-2. **Subtelomeric coverage.** Effective per-allele coverage at D4Z4 is 30–50% lower than genome-wide average. At 30× WGS, expect ~4–6 reads per allele.
+2. **Subtelomeric coverage.** Effective per-allele coverage at D4Z4 is 30–50% lower than genome-wide average. At 30× WGS, expect \~4–6 reads per allele.
 
 3. **Flye tandem repeat collapse.** Flye may underestimate RU count for large arrays. The pipeline mitigates this by comparing Flye RU with max single-read RU and selecting the larger.
 
@@ -470,7 +470,7 @@ These steps are performed outside this pipeline. The pipeline input is an hg38-a
 
 6. **Somatic mosaicism.** Mosaic samples may show multiple RU count clusters from the same allele. The pipeline does not explicitly detect mosaicism but unusual clustering patterns should be flagged for review.
 
-7. **Cis duplications.** Two adjacent D4Z4 arrays on one allele (~1.5% of Europeans) may produce two distinct RU groups in one HP. The pipeline may misinterpret this as two alleles.
+7. **Cis duplications.** Two adjacent D4Z4 arrays on one allele (\~1.5% of Europeans) may produce two distinct RU groups in one HP. The pipeline may misinterpret this as two alleles.
 
 ---
 

@@ -6,3 +6,7 @@ nf-fshd/*.sif
 
 # Runtime logs
 *.log
+
+# nextflow temporary files
+.nextflow*
+.nextflow/

@@ -1,6 +1,6 @@
 # nf-fshd: ONT D4Z4 Repeat Unit Counting, Haplotyping, and Methylation Pipeline
 
-A Nextflow DSL2 pipeline for FSHD diagnosis from hg38-aligned ONT BAM/CRAM files with HP tags from upstream phasing. The pipeline resolves all four D4Z4 alleles (2× chr4, 2× chr10), determines 4qA/4qB haplotype, counts D4Z4 repeat units per allele, and reports allele-specific CpG methylation at the distal DUX4 region. All analysis coordinates reference **T2T-CHM13v2.0**.
+A Nextflow DSL2 pipeline for FSHD diagnosis from hg38-aligned ONT BAM/CRAM files with HP tags from upstream phasing. The pipeline resolves all four D4Z4 alleles (2× chr4, 2× chr10), determines 4qA-L/4qA-S/4qB haplotype, counts D4Z4 repeat units per allele via per-read BLAST annotation, validates results against biological constraints, and reports allele-specific CpG methylation at the distal DUX4 region. All analysis coordinates reference **T2T-CHM13v2.0**.
 
 ---
 
@@ -12,14 +12,38 @@ The D4Z4 macrosatellite array on chromosome 4q35 consists of tandem 3.3 kb repea
 
 ### Haplotype backgrounds
 
-| Haplotype | Permissive? | Key feature | Population freq |
-|-----------|-------------|-------------|-----------------|
-| **4qA** (includes 4A161) | Yes | Contains pLAM with functional DUX4 PAS (ATTAAA) | \~50% of chr4 alleles |
-| **4qA-L** (4A161L) | Yes | 1.6 kb longer distal partial D4Z4 unit; functional PAS | \~20% of European 4A161 alleles |
-| **4qB** | No | Lacks pLAM entirely; DUX4 mRNA unstable | \~50% of chr4 alleles |
-| **10qA** | No | 98.5% identity to 4qA but non-functional PAS (SNPs) | Most chr10 alleles |
+D4Z4 haplotypes are defined by three features: a proximal SSLP (simple sequence length polymorphism) allele, the D4F104S1 (p13E-11) SNP pattern (\~15 diagnostic SNPs), and the distal sequence structure. At least 17 distinct haplotypes have been identified across chr4 and chr10 (Lemmers et al., 2007, 2010; van der Vliet et al., 2015).
 
-Only contractions on 4qA or 4qA-L cause FSHD1. Contractions on 4qB are clinically silent (Lemmers et al., 2012).
+| Haplotype | Chr | SSLP | Distal | β-satellite | PAS | D4F104S1 | XapI | BlnI | Permissive | Freq | Reference |
+|-----------|-----|------|--------|-------------|-----|----------|------|------|------------|------|-----------|
+| **4A161** (4qA-S) | chr4 | 161 | pLAM (241 bp) | 6.2 kb | ATTAAA | chr4-type | + | − | **Yes** | Most common 4qA | Lemmers et al. (2002) |
+| **4A161L** (4qA-L) | chr4 | 161 | pLAM (241 bp) | 6.2 kb | ATTAAA | chr4-type | + | − | **Yes** | \~20% of 4A161 | Lemmers et al. (2018) |
+| **4A159** | chr4 | 159 | pLAM | present | ATTAAA | chr4-type | + | − | **Yes** | Uncommon | van der Vliet et al. (2015) |
+| **4A168** | chr4 | 168 | pLAM | present | ATTAAA | chr4-type | + | − | **Yes** | Uncommon | van der Vliet et al. (2015) |
+| **4A166** | chr4 | 166 | pLAM (241 bp) | 6.2 kb | ATTAAA | **chr10-like** | **−** | mixed | No | \~11% of 4qA | Lemmers et al. (2007, 2018) |
+| **4B163** | chr4 | 163 | 4qB distal (181 bp) | absent | absent | chr4-type | + | − | No | \~50% of chr4 | Lemmers et al. (2002) |
+| **4B168** | chr4 | 168 | 4qB distal | absent | absent | chr4-type | + | − | No | Uncommon | Lemmers et al. (2010) |
+| **10A166** | chr10 | 166 | pLAM-like (241 bp) | 6.2 kb | ATCAAA | chr10-type | − | + | No | Most common 10q | van der Vliet et al. (2015) |
+| **10A164** | chr10 | 164 | pLAM-like | present | ATCAAA | chr10-type | − | + | No | Common | Lemmers et al. (2010) |
+| **10A176T** | chr10 | 176 | pLAM-like | present | ATTTAA | chr10-type | − | + | No | Rare | van der Vliet et al. (2015) |
+| **10B161T** | chr10 | 161 | B-type distal | absent | absent | chr10-type | − | + | No | Rare | Lemmers et al. (2010) |
+
+Column definitions:
+- **SSLP**: Length (bp) of the simple sequence length polymorphism proximal to D4Z4.
+- **Distal**: Sequence immediately distal to the last D4Z4 unit. A-type carries pLAM (\~241 bp, GenBank HM190178.1 / HM190187.1); B-type carries a distinct \~181 bp sequence (HM190161.1) unrelated to pLAM.
+- **β-satellite**: 6.2 kb tandem repeat of 68-bp units distal to pLAM; present in A-type, absent in B-type.
+- **PAS**: Polyadenylation signal in pLAM. ATTAAA is functional (stabilizes DUX4 mRNA); ATCAAA and ATTTAA are non-functional (single SNP disrupts PAS).
+- **D4F104S1**: Proximal marker SNP pattern. "chr4-type" matches GU550601.1 (4A161); "chr10-type" matches GU550630.1 (10A164b); "chr10-like" = 4A166 resembles chr10 (Lemmers et al., 2007).
+- **XapI**: Restriction site `RAATTY` in proximal D4Z4 unit. Present (+) on chr4-type units; absent (−) on chr10-type and 4A166.
+- **BlnI**: Restriction site `CCTAGG` within D4Z4 units. Absent (−) on chr4-type units (`CTAGGTCTAGG`); present (+) on chr10-type units (`CTAGGCCTAGG`).
+
+**4qA-S vs 4qA-L**: Both share the same SSLP (161), D4F104S1 pattern, pLAM sequence, and ATTAAA PAS. They differ only in the length of the most distal (terminal) D4Z4 repeat unit adjacent to pLAM: 4qA-S has a truncated terminal unit (\~1.8 kb, ≤2800 bp) while 4qA-L has a full-length terminal unit (\~3.3 kb, >2800 bp). Both are permissive for FSHD1 (Lemmers et al., 2018).
+
+**4A166**: Despite having a functional ATTAAA PAS, 4A166 is non-permissive — DUX4 polyadenylation is very inefficient on this haplotype. The proximal D4F104S1 SNPs and D4Z4 XapI pattern resemble 10qA166, suggesting an evolutionary hybrid origin. The mechanism of non-permissiveness remains under investigation (Lemmers et al., 2007, 2018). The pipeline will classify 4A166 reads as chr10/10qA with a chimeric flag (proximal=10qA, distal=4qA); see Known limitations #9.
+
+**Subtelomeric exchanges**: The 4q35 and 10q26 regions share \~98.5% identity. Interchromosomal exchanges occur in \~3–10% of the population (Lemmers et al., 2010), producing hybrid alleles (e.g., chr4 with 10qA-type pLAM or vice versa). Such exchanges can revert FSHD pathogenicity (Moriatis et al., 2024). The pipeline detects these as chimeric reads (proximal marker type ≠ distal marker type).
+
+Only contractions on permissive haplotypes (4A161/4A161L/4A159/4A168) cause FSHD1. Contractions on all other haplotypes are clinically silent (Lemmers et al., 2012).
 
 ### D4Z4 array sizes
 
@@ -41,7 +65,7 @@ Only contractions on 4qA or 4qA-L cause FSHD1. Contractions on 4qB are clinicall
 |-----------|------------------------------------------------|---------------------|
 | Typical N50 | 25–30 kb | 50–100+ kb |
 | Max reliable spanning | \~7–8 RU (\~26 kb) | \~15–20 RU |
-| Marginal spanning | 9–10 RU (~33 kb) | 20–30 RU |
+| Marginal spanning | 9–10 RU (\~33 kb) | 20–30 RU |
 | Never spanned | ≥11 RU (≥36 kb) | ≥30 RU |
 
 A read is **"complete"** when it contains both the proximal p13E-11 anchor AND the distal pLAM anchor. With standard N50 \~25–30 kb, complete reads can only come from alleles with ≤\~10 RU. Healthy alleles (≥11 RU) will never produce complete reads with standard prep.
@@ -62,146 +86,98 @@ A read is **"complete"** when it contains both the proximal p13E-11 anchor AND t
 ### Chr4 vs chr10 discrimination
 
 - D4Z4 arrays share \~98.5–99% identity between chr4 and chr10
-- Discrimination relies on unique flanking sequences and a chr10-specific BlnI restriction site within D4Z4 units
-- Reads must extend into flanking regions for reliable chromosome assignment
-- Haplotype detection (4qA vs 10qA) requires reads extending past the last D4Z4 unit to detect pLAM
-
-### Flye assembly caveats
-
-- Minimum \~10× coverage; 30–40× recommended. Per-allele coverage at D4Z4 is typically 4–12× (marginal)
-- Flye may collapse identical D4Z4 copies, underestimating RU count (Kolmogorov et al., 2019)
-- Resolution: take whichever has MORE RUs — assembly or longest raw read
+- Chromosome discrimination uses three tiers: BAM alignment, BlnI/XapI restriction motif voting, and haplotype marker concordance
+- The BlnI motif distinguishes chr4-type (`CTAGGTCTAGG`) from chr10-type (`CTAGGCCTAGG`) D4Z4 units
+- The XapI motif (`RAATTY` = `[AG]AATT[CT]`) is chr4-specific (Butterfield et al., 2023); absent in 4A166 and chr10
+- Haplotype-specific D4F104S1 (proximal) and pLAM (distal) markers provide independent chromosome and haplotype evidence
 
 ---
 
-## Algorithm: complete-reads-first allele assignment
+## Algorithm: BLAST-based per-read annotation
 
-The pipeline processes chr4 and chr10 independently. After BLAST annotation, every read has: `RU_Count`, `Has_Head` (p13E-11), `Has_Tail` (pLAM), `Haplotype` (4qA/10qA/−), and `HP` tag (1/2/none).
+Each read is annotated independently after BLAST alignment against three query files (D4Z4 repeat unit, 6 haplotype-specific markers, P13E11). No consensus assembly or allele separation is performed; the maximum RU count observed across reads within a (Chromosome, Haplotype, Head, Tail) group is reported.
 
-The algorithm has three sequential phases:
-
-```
-Phase 1: SEPARATE ALLELES     → which reads belong together?
-Phase 2: FIND COMPLETE READS  → which allele has spanning reads?
-Phase 3: COUNT per allele     → read-level (consensus) or assembly?
-```
-
-### Phase 1: Separate alleles
-
-Group reads into two alleles using the best available signal:
+### Chromosome and haplotype determination flow
 
 ```
-IF any reads on this chromosome have HP tags:
-    Allele_1 = reads with HP == 1
-    Allele_2 = reads with HP == 2
-    unphased = reads without HP tag
-    separation_method = 'hp'
-
-ELSE (no HP tags at all):
-    IF complete reads exist:
-        complete_ru = median(RU_Count of complete reads)
-        Allele_1 = reads with RU_Count <= complete_ru + 2
-        Allele_2 = reads with RU_Count > complete_ru + 2
-        separation_method = 'ru-anchor'
-    ELSE:
-        IF std(RU_counts) >= 1.5 AND len(reads) >= 2:
-            Jenks 2-class split -> Allele_1 (shorter), Allele_2 (longer)
-            separation_method = 'jenks'
-        ELSE:
-            Allele_1 = all reads
-            Allele_2 = empty
-            separation_method = 'single'
+Read with D4Z4 BLAST hits (RU ≥ 1, alignment > 1500 bp)
+│
+├─ EVIDENCE GATHERING (parallel)
+│   ├─ BAM alignment → initial chr (Tier 1, weakest)
+│   ├─ BlnI motif count: CTAGGTCTAGG (chr4) vs CTAGGCCTAGG (chr10)
+│   ├─ XapI motif count: [AG]AATT[CT] (chr4-specific)
+│   ├─ Best proximal marker: 4qA / 4qB / 10qA D4F104S1 (by bitscore)
+│   ├─ Best distal marker:   4qA / 4qB / 10qA pLAM (by bitscore)
+│   └─ P13E11 anchor (proximal completeness)
+│
+├─ CHROMOSOME ASSIGNMENT (three tiers, strongest last)
+│   │
+│   ├─ Tier 1: BAM alignment to T2T → chr4 or chr10 (initial)
+│   │
+│   ├─ Tier 2: BlnI + XapI motif voting (overrides Tier 1)
+│   │   chr4_score  = BlnI_chr4 + XapI
+│   │   chr10_score = BlnI_chr10
+│   │   ├─ chr10_score > chr4_score → chr10
+│   │   ├─ chr4_score > chr10_score → chr4
+│   │   └─ tie → retain Tier 1
+│   │
+│   └─ Tier 3: Haplotype marker concordance (strongest)
+│       ├─ proximal AND distal agree on chr → OVERRIDE to that chr
+│       ├─ proximal AND distal disagree → keep Tier 1/2 (chimeric)
+│       └─ single marker + motif total = 0 → use marker as tiebreaker
+│
+├─ HAPLOTYPE ASSIGNMENT (prefix always matches chromosome)
+│   │
+│   ├─ Has distal marker?
+│   │   ├─ 4qA_pLAM or 10qA_pLAM → A-type
+│   │   │   ├─ chr = chr4 + 4qA_pLAM → subtype by terminal D4Z4 unit:
+│   │   │   │   ├─ closest D4Z4 to pLAM > 2800 bp → 4qA-L
+│   │   │   │   ├─ closest D4Z4 to pLAM ≤ 2800 bp → 4qA-S
+│   │   │   │   └─ no D4Z4 position data → 4qA
+│   │   │   ├─ chr = chr4 + 10qA_pLAM → 4qA (translocation)
+│   │   │   ├─ chr = chr10 + any A-type pLAM → 10qA
+│   │   │   └─ unknown chr → Unknown
+│   │   │
+│   │   └─ 4qB_pLAM → B-type
+│   │       ├─ chr = chr4 → 4qB
+│   │       └─ chr = chr10 → 10qB
+│   │
+│   ├─ No distal, has proximal D4F104S1?
+│   │   ├─ *A_D4F104S1 → *qA (prefix from chromosome)
+│   │   └─ *B_D4F104S1 → *qB (prefix from chromosome)
+│   │
+│   └─ No markers at all?
+│       ├─ chr4 → 4q
+│       └─ chr10 → 10q
+│
+├─ CHIMERIC CHECK
+│   └─ proximal marker type ≠ distal marker type → Chimeric = TRUE
+│
+├─ PERMISSIVE CHECK (sequence-dependent, not chromosome-dependent)
+│   └─ Distal_Marker = 4qA_pLAM AND Chimeric = FALSE → Permissive = TRUE
+│       (functional ATTAAA PAS; applies to chr4 or chr10 translocations)
+│       All other cases → Permissive = FALSE
+│
+├─ COMPLETENESS
+│   ├─ Has_Head = proximal marker hit (D4F104S1 or P13E11)
+│   └─ Has_Tail = distal marker hit (4qA/4qB/10qA pLAM)
+│
+└─ OUTPUT: reads_annotated.tsv
+    Chromosome, Haplotype, Permissive, RU_Count, Has_Head, Has_Tail,
+    Proximal_Marker, Distal_Marker, Chimeric, Chr_Confidence, ...
 ```
 
-HP is always preferred when available — it uses flanking-region SNPs and doesn't depend on RU count differences.
+### Chromosome confidence scoring
 
-### Phase 2: Assign unphased reads
+| Level | Criterion |
+|-------|-----------|
+| HIGH | All motifs agree (minority side score = 0), or majority ≥ 80% of total motifs |
+| MEDIUM | Majority ≥ 60% but < 80% of total motifs |
+| LOW | No motif evidence (BAM-only), or majority < 60% (mixed evidence) |
 
-Complete reads (Has_Head AND Has_Tail) span the full array and **can only come from the shorter allele** (biological constraint: healthy alleles ≥11 RU exceed ONT N50; Huang et al., 2024).
+### 4qA-S / 4qA-L subtyping
 
-```
-IF no complete reads:
-    Skip to Phase 3 (all alleles use assembly)
-
-IF complete reads already have HP tags:
-    Already in the correct allele from Phase 1
-
-IF complete reads lack HP tags (separation was by HP):
-    Assign to the allele whose median RU is closest
-
-All remaining unphased reads:
-    IF allele has complete reads (max_RU = X) AND read RU > X + 2:
-        Force-assign to the OTHER allele (ru-constraint)
-    ELSE:
-        minimap2 align read against HAP1 pool and HAP2 pool
-        Assign to allele with more matching bases (alignment)
-        Tie: assign to allele with closer median RU (ru-proximity)
-```
-
-### Phase 3: Per-allele strategy
-
-Each allele independently gets one of two strategies:
-
-```
-For each allele:
-
-    IF allele has complete reads -> STRATEGY: READ-LEVEL
-        spanning = complete + partial-distal reads
-        raw_ref = longest spanning read
-
-        IF >= 3 spanning reads:
-            Racon consensus (raw_ref as seed, polish with others)
-        ELSE:
-            consensus = raw_ref as-is
-
-        reference = consensus
-        RU_count = BLAST d4z4.fa against consensus (hits > 1500 bp)
-
-    ELSE -> STRATEGY: ASSEMBLY
-        Run Flye on allele reads (--nano-hq --genome-size 300k)
-        max_raw_ru = max(RU_Count) among reads in this allele
-
-        IF Flye succeeded AND Flye_RU >= max_raw_ru:
-            reference = Flye contig
-        ELSE:
-            reference = longest raw read
-
-        RU_count = BLAST d4z4.fa against reference (hits > 1500 bp)
-```
-
-### Example walkthroughs
-
-**Classic FSHD1 (most common):**
-
-| Phase | What happens |
-|-------|-------------|
-| Phase 1 | HP tags exist → Allele_1 (HP=1), Allele_2 (HP=2) |
-| Phase 2 | Complete reads found with HP=1 → already in Allele_1 |
-| Phase 3 | Allele_1: read-level (Racon consensus). Allele_2: assembly (Flye vs max raw read) |
-
-**No HP tags, complete reads exist:**
-
-| Phase | What happens |
-|-------|-------------|
-| Phase 1 | No HP → use complete reads as RU anchor. Allele_1 (≤RU+2), Allele_2 (>RU+2) |
-| Phase 2 | Complete reads already in Allele_1 by construction |
-| Phase 3 | Allele_1: read-level. Allele_2: assembly (or empty → single allele) |
-
-**Both alleles short (homozygous contraction):**
-
-| Phase | What happens |
-|-------|-------------|
-| Phase 1 | HP tags → Allele_1 (HP=1), Allele_2 (HP=2) |
-| Phase 2 | Complete reads in BOTH alleles |
-| Phase 3 | Both alleles: read-level (Racon consensus each) |
-
-**No complete reads (chr10, or healthy chr4):**
-
-| Phase | What happens |
-|-------|-------------|
-| Phase 1 | HP tags → Allele_1 (HP=1), Allele_2 (HP=2) |
-| Phase 2 | No complete reads → skip |
-| Phase 3 | Both alleles: assembly (Flye vs max raw read) |
+4qA-S (standard) and 4qA-L (long) differ only in the length of the most distal (terminal) D4Z4 repeat unit adjacent to pLAM (Lemmers et al., 2018). For reads with a `4qA_pLAM` hit, the pipeline finds the D4Z4 BLAST hit closest to the pLAM position: **>2800 bp** → **4qA-L** (full-length \~3.3 kb); **≤2800 bp** → **4qA-S** (truncated \~1.8 kb). Both subtypes are permissive.
 
 ---
 
@@ -237,47 +213,42 @@ BED (T2T):
 
 Published output: `{SAMPLE_ID}.d4z4.bam` + `.bai`
 
-### Step 4: Chromosome assignment and feature annotation (BLAST_ANNOTATE)
+### Step 4: Chromosome assignment, feature annotation, and validation (BLAST_ANNOTATE)
 
-BLAST-based feature annotation following the approach of Lowenstern et al. (2026) and Huang et al. (2024):
-
-```
-blastn d4z4.fa       -> RU counting (hits > 1500 bp)
-blastn pLAM-polyA.fa -> distal anchor + 4qA/10qA haplotype
-blastn P13E11.fasta  -> proximal anchor
-```
-
-**Chromosome assignment (three-tier):**
-
-1. **BAM alignment** (initial): minimap2 alignment to T2T reference
-2. **BlnI motif counting** (correction): chr4-type `CTAGGTCTAGG` vs chr10-type `CTAGGCCTAGG` — majority wins
-3. **Haplotype override** (final): 4qA (ATTAAA) → force chr4; 10qA (ATCAAA) → force chr10
-
-### Step 5: Allele assignment (ALLELE_ASSIGN)
-
-Three-phase algorithm: Phase 1 (separate by HP/RU-anchor/Jenks), Phase 2 (assign unphased reads via RU-constraint + alignment + proximity), Phase 3 (determine read-level vs assembly strategy per allele).
-
-### Step 6: Read-level counting (READLEVEL_COUNT)
-
-For alleles with complete reads: extract spanning reads → Racon consensus (Vaser et al., 2017; if ≥3 reads) → BLAST RU count. This approach follows D4Z4End2End (Xiao et al., 2025).
-
-### Step 7: Assembly-based counting (ASSEMBLY_COUNT)
-
-For alleles without complete reads: Flye assembly → compare Flye RU with max raw-read RU → select reference with more RUs → BLAST RU count.
-
-### Step 8: Per-allele CpG methylation (METHYLATION)
+BLAST-based per-read annotation following the approach of Lowenstern et al. (2026), Huang et al. (2024), and Butterfield et al. (2023). Three BLAST queries annotate each read, followed by biological validation:
 
 ```
-modkit pileup --phased --cpg --combine-strands --combine-mods
-    --modified-bases 5mC
-    --include-bed chr4:193540172-193543634, chr10:134738000-134741148
+blastn d4z4.fa              -> RU counting (hits > 1500 bp)
+blastn haplotype_markers.fa -> 6 haplotype-specific markers (proximal + distal)
+blastn P13E11.fasta         -> additional proximal anchor
 ```
 
-Runs independently; only needs T2T BAM from Step 2.
+After classification, the pipeline validates results against biological constraints and flags impossible configurations in a `Flag` column and a `validation.txt` report:
 
-### Step 9: Generate report (REPORT)
+| Check | Rule | Flag |
+|-------|------|------|
+| Haplotype count | At most 2 typed haplotypes per chromosome (excluding 4q/10q fragments) | WARN in validation.txt |
+| Completeness consistency | An incomplete read longer than the shortest complete read in the same haplotype group | `longer_than_complete` |
+| RU consistency | An incomplete read with more RUs than the max complete read RU in the same haplotype group | `RU_exceeds_complete` |
+| Fragment RU sanity | A fragment read (4q/10q) with RU exceeding the max complete RU across all alleles on that chromosome | `RU_exceeds_all_alleles` |
+| Chimeric detection | Proximal marker type ≠ distal marker type (possible translocation or chimeric read) | `chimeric` |
 
-Produces `repeats.tsv` and `methylation.tsv` from allele assignments, RU counts, and methylation data.
+### Step 5: Per-allele CpG methylation (METHYLATION)
+
+```
+modkit pileup <t2t.bam> meth_out/ \
+    --ref <t2t_reference.fna> \
+    --cpg --combine-strands \
+    --modified-bases 5mC \
+    --phased \
+    --include-bed meth_targets.bed
+```
+
+Target regions in `meth_targets.bed`: chr4:193,540,172–193,543,634 and chr10:134,738,000–134,741,148. Runs independently; only needs the T2T BAM from Step 2.
+
+### Step 6: Generate report (REPORT)
+
+Produces `repeats.tsv` and `methylation.tsv` from BLAST annotations and methylation pileup data.
 
 ---
 
@@ -297,68 +268,46 @@ Step 3: EXTRACT_D4Z4                             |
     |                                            |
     v                                            |
 Step 4: BLAST_ANNOTATE                           |
-(RU, anchors, BlnI chr, haplotype)               |
+(RU count, anchors, BlnI+XapI chr,               |
+ haplotype, validation)                          |
     |                                            |
-    v                                            |
-Step 5: ALLELE_ASSIGN  <-------------------------'
-    |
-    |  Phase 1: Separate alleles
-    |      HP tags? -> group by HP
-    |      No HP?   -> RU-anchor (if complete reads) or Jenks
-    |
-    |  Phase 2: Assign complete reads
-    |      Already have HP? -> done
-    |      No HP? -> assign to allele with closest median RU
-    |
-    |  Phase 3: Per-allele strategy
-    |      Has complete reads? -> Step 6 (read-level)
-    |      No complete reads?  -> Step 7 (assembly)
-    |
-    |               .-----------------.
-    v               v                 |
-Step 6:         Step 7:               |
-READLEVEL       ASSEMBLY              |
-(Racon          (Flye vs raw read     |
- consensus)      -> pick more RUs)    |
-    |               |                 |
-    '-------+-------'                 |
-            |                         |
-            |         .---------------'
-            v         v
-        Step 8: METHYLATION
-        (modkit --phased from T2T BAM)
-            |
-            v
-        Step 9: REPORT
-        (repeats.tsv + methylation.tsv)
+    |                     Step 5: METHYLATION <--'
+    |                     (modkit --phased from T2T BAM)
+    |                            |
+    '----------+-----------------'
+               |
+               v
+           Step 6: REPORT
+           (repeats.tsv + methylation.tsv)
 ```
 
 ---
 
 ## Output
 
-Four published files per sample:
+Seven published files per sample:
 
 | File | Description |
 |------|-------------|
 | `{SAMPLE_ID}.d4z4.bam` | D4Z4 candidate reads aligned to T2T-CHM13v2.0 |
 | `{SAMPLE_ID}.d4z4.bam.bai` | BAM index |
-| `{SAMPLE_ID}.repeats.tsv` | D4Z4 repeat unit counts per allele |
+| `{SAMPLE_ID}.complete_reads.bam` | Complete reads (Has_Head AND Has_Tail) extracted from D4Z4 BAM |
+| `{SAMPLE_ID}.complete_reads.bam.bai` | BAM index |
+| `{SAMPLE_ID}.repeats.tsv` | D4Z4 repeat unit counts grouped by haplotype |
 | `{SAMPLE_ID}.methylation.tsv` | CpG methylation at distal D4Z4/DUX4 region |
+| `{SAMPLE_ID}.validation.txt` | Biological validation report with complete read details |
 
 ### repeats.tsv
 
-One row per (Allele, Haplotype, Complete) group. RU_Count is the max within each group.
+One row per (Chromosome, Haplotype, Head, Tail) group. Chr4 rows appear above chr10 rows.
 
 | Column | Description |
 |--------|-------------|
 | Chromosome | chr4 or chr10 |
-| Allele | HAP1 / HAP2 / − (unphased) |
-| Haplotype | 4qA / 10qA / − (no pLAM = 4qB or untyped) |
-| RU_Count | Max RU count among reads in this group |
-| Complete | complete / head-only / tail-only / incomplete |
-| Count_Method | read-level / assembly / − (unphased) |
-| Reference_Source | consensus / flye / raw-read / − (unphased) |
+| Haplotype | 4qA-S / 4qA-L / 4qA / 4qB / 4q / 10qA / 10qB / 10q (prefix matches chromosome) |
+| RU_Count | Maximum RU count among reads in this group. Prefixed with **≥** for incomplete reads (missing Head or Tail), indicating the count is a lower bound |
+| Head | TRUE if reads in this group carry a proximal marker (D4F104S1 or p13E-11) |
+| Tail | TRUE if reads in this group carry a distal marker (4qA/4qB/10qA pLAM) |
 | Read_Count | Number of reads in this group |
 
 ### methylation.tsv
@@ -370,18 +319,21 @@ One row per (Allele, Haplotype, Complete) group. RU_Count is the max within each
 | Methylation | Mean % modified across CpGs in region |
 | N_CpG | Number of CpGs with data |
 | Ref_Atlas (Mean (SD) %) | ONT methylation reference atlas (\~45–49 healthy controls; Huang et al., 2024) |
+| Ref_Atlas (IQR %) | Interquartile range [Q1, Q2, Q3] computed from all CpG REF_METH values in the reference atlas |
 | Lit_Caputo (%) | Diagnostic threshold (Caputo et al., 2022; Strafella et al., 2024) |
 
 **Reference values (T2T coordinates):**
 
-| Region | T2T coordinates | Ref_Atlas | Lit_Caputo threshold |
-|--------|----------------|-----------|---------------------|
-| DR1 | chr4:193,541,000–193,541,600 | 54.70% (1.97%) | CpG1 ≤ 53% |
-| DUX4-PAS | chr4:193,543,430–193,543,634 | 51.81% (0.23%) | CpG6 ≤ 78% |
+| Region | T2T coordinates | Ref_Atlas Mean (SD) | Ref_Atlas IQR [Q1, Q2, Q3] | Lit_Caputo threshold |
+|--------|----------------|---------------------|---------------------------|---------------------|
+| DR1 | chr4:193,541,000–193,541,600 | 54.70% (1.97%) | [53.07%, 54.89%, 56.83%] | CpG1 ≤ 53% |
+| DUX4-PAS | chr4:193,543,430–193,543,634 | 51.81% (0.23%) | [51.63%, 51.75%, 51.99%] | CpG6 ≤ 78% |
 
 ---
 
 ## Usage
+
+> **Note:** This pipeline must be run on the GS4 machine. Connect via `ssh gs4` before launching.
 
 ```bash
 bash nf-fshd/run.sh /path/to/sample.bam
@@ -421,11 +373,22 @@ These steps are performed outside this pipeline. The pipeline input is an hg38-a
 
 **Query sequences (`nf-fshd/query/`):**
 
-| File | Purpose |
-|------|---------|
-| `d4z4.fa` | Single D4Z4 RU (\~3.3 kb) for RU counting |
-| `pLAM-polyA.fa` | hapA (4qA ATTAAA PAS) / hapB (10qA ATCAAA PAS) for haplotype + distal anchor; 4qB has no pLAM |
-| `P13E11.fasta` | p13E-11 probe for proximal anchor |
+| File | Sequences | Purpose |
+|------|-----------|---------|
+| `d4z4.fa` | Single D4Z4 RU (3,297 bp) | RU counting |
+| `haplotype_markers.fa` | 6 haplotype-specific markers (see below) | Proximal/distal haplotype discrimination |
+| `P13E11.fasta` | p13E-11 probe (220 bp) | Additional proximal anchor |
+
+**Haplotype markers (`haplotype_markers.fa`):**
+
+| Marker | GenBank | Length | Position | Purpose |
+|--------|---------|--------|----------|---------|
+| `4qA_D4F104S1` | GU550601.1 (4A161) | 489 bp | Proximal | 4qA-specific D4F104S1 |
+| `4qB_D4F104S1` | GU550603.1 (4B163) | 489 bp | Proximal | 4qB-specific D4F104S1 |
+| `10qA_D4F104S1` | GU550630.1 (10A164b) | 489 bp | Proximal | 10qA-specific D4F104S1 |
+| `4qA_pLAM` | HM190178.1:3205-3445 | 241 bp | Distal | 4qA pLAM with ATTAAA PAS |
+| `4qB_pLAM` | HM190161.1:3124-3304 | 181 bp | Distal | 4qB distal (no functional PAS) |
+| `10qA_pLAM` | HM190187.1:3214-3454 | 241 bp | Distal | 10qA pLAM with ATCAAA PAS |
 
 ---
 
@@ -437,15 +400,11 @@ These steps are performed outside this pipeline. The pipeline input is an hg38-a
 |------|---------|---------|-----------|
 | Python | 3.12 | Scripting runtime | |
 | samtools | 1.23 | BAM/CRAM extraction, sort, index, merge, FASTQ conversion | Danecek et al. (2021) |
-| minimap2 | 2.30 | T2T realignment; alignment-based unphased read assignment | Li (2018) |
+| minimap2 | 2.30 | T2T realignment (Step 2 only) | Li (2018) |
 | BLAST+ | 2.17.0 | RU counting, anchor detection, haplotyping, chromosome assignment | Camacho et al. (2009) |
-| modkit | 0.6.1 | Phased CpG methylation pileup | Oxford Nanopore Technologies (2024a) |
-| Flye | 2.9.6 | Per-allele local assembly | Kolmogorov et al. (2019) |
-| Racon | 1.5.0 | Consensus polishing from spanning reads | Vaser et al. (2017) |
-| seqkit | 2.13.0 | FASTA extraction and sorting | Shen et al. (2016) |
-| pysam | 0.23.3 | BAM read iteration and HP tag extraction in Python | |
+| modkit | 0.6.1 | Phased CpG methylation pileup (5mC only) | Oxford Nanopore Technologies (2024a) |
+| pysam | 0.23.3 | BAM read iteration, motif counting in Python | |
 | pandas | 3.0.1 | Tabular data processing and report generation | |
-| jenkspy | 0.4.1 | Jenks natural breaks for fallback allele separation | |
 
 ### Runtime requirements (host)
 
@@ -462,7 +421,7 @@ These steps are performed outside this pipeline. The pipeline input is an hg38-a
 
 2. **Subtelomeric coverage.** Effective per-allele coverage at D4Z4 is 30–50% lower than genome-wide average. At 30× WGS, expect \~4–6 reads per allele.
 
-3. **Flye tandem repeat collapse.** Flye may underestimate RU count for large arrays. The pipeline mitigates this by comparing Flye RU with max single-read RU and selecting the larger.
+3. **Per-read BLAST counting.** Per-read BLAST counting reflects only the D4Z4 content within each individual read. For alleles longer than the read length, the maximum observed RU count across all reads is a lower bound.
 
 4. **Methylation coverage.** At 30× WGS, per-allele methylation coverage may be only 3–5 reads. ≥60× recommended for clinical-grade calls.
 
@@ -472,23 +431,47 @@ These steps are performed outside this pipeline. The pipeline input is an hg38-a
 
 7. **Cis duplications.** Two adjacent D4Z4 arrays on one allele (\~1.5% of Europeans) may produce two distinct RU groups in one HP. The pipeline may misinterpret this as two alleles.
 
+8. **Biological validation flags.** The validation step detects inconsistencies (e.g., incomplete reads longer than complete reads, RU counts exceeding complete-read counts) but does not auto-correct them. Flagged reads should be reviewed manually. Common causes include chimeric reads, BLAST sensitivity limits, and reads from different alleles with spurious cross-haplotype BLAST hits.
+
+9. **4A166 haplotype misclassification.** The 4A166 haplotype (\~11% of 4qA alleles) has chr10-like features: its D4F104S1 SNP pattern resembles 10qA166, and its proximal D4Z4 unit lacks the chr4-specific XapI site (Lemmers et al., 2007). As a result, 4A166 reads may be assigned to chr10 by both BAM alignment (Tier 1) and motif voting (Tier 2), and the proximal marker will best-match `10qA_D4F104S1`. However, the distal marker will match `4qA_pLAM` (ATTAAA PAS), causing the read to be flagged as **chimeric** (proximal=10qA, distal=4qA). Since 4A166 is non-permissive for FSHD (like 10qA), this misclassification has no clinical impact. A chimeric flag with proximal=10qA and distal=4qA in the output should prompt consideration of the 4A166 haplotype.
+
 ---
 
 ## References
 
-### FSHD biology and clinical
+### FSHD biology, haplotypes, and clinical
 
 Caputo, V., Megalizzi, D., Fabrizio, C., Termine, A., Colantoni, L., Bax, C., Gimenez, J., Monforte, M., Tasca, G., Ricci, E., Caltagirone, C., Giardina, E., Cascella, R., & Strafella, C. (2022). D4Z4 methylation levels combined with a machine learning pipeline highlight single CpG sites as discriminating biomarkers for FSHD patients. *Cells*, *11*(24), Article 4114. https://doi.org/10.3390/cells11244114
 
+Hiramuki, Y., Kure, Y., Saito, Y., Ogawa, M., Ishikawa, A., Murata, M., Hayashi, Y. K., Oya, Y., Komaki, H., Nonaka, I., Nishino, I., Inoue, M., Sasaki, M., & Mitsuhashi, S. (2018). Simultaneous measurement of the size and methylation of chromosome 4qA-D4Z4 repeats in facioscapulohumeral muscular dystrophy by long-read sequencing. *Journal of Translational Medicine*, *20*, Article 517. https://doi.org/10.1186/s12967-022-03743-7
+
+Lemmers, R. J. L. F., de Kievit, P., Sandkuijl, L., Padberg, G. W., van Ommen, G.-J. B., Frants, R. R., & van der Maarel, S. M. (2002). Facioscapulohumeral muscular dystrophy is uniquely associated with one of the two variants of the 4q subtelomere. *Nature Genetics*, *32*(2), 235–236. https://doi.org/10.1038/ng999
+
+Lemmers, R. J. L. F., Wohlgemuth, M., van der Gaag, K. J., van der Vliet, P. J., van Teijlingen, C. M. M., de Knijff, P., Padberg, G. W., Frants, R. R., & van der Maarel, S. M. (2007). Specific sequence variations within the 4q35 region are associated with facioscapulohumeral muscular dystrophy. *American Journal of Human Genetics*, *81*(5), 884–894. https://doi.org/10.1086/521986
+
+Lemmers, R. J. L. F., van der Vliet, P. J., van der Gaag, K. J., Jacobs, S. J., van der Stoep, N., de Knijff, P., & van der Maarel, S. M. (2010). Worldwide population analysis of the 4q and 10q subtelomeres identifies only four discrete interchromosomal sequence transfers in human evolution. *American Journal of Human Genetics*, *86*(3), 364–377. https://doi.org/10.1016/j.ajhg.2010.01.035
+
 Lemmers, R. J. L. F., Tawil, R., Petek, L. M., Balog, J., Block, G. J., Santen, G. W. E., Amell, A. M., van der Vliet, P. J., Almomani, R., Straasheijm, K. R., Krom, Y. D., Klooster, R., Sun, Y., den Dunnen, J. T., Helmer, Q., Donlin-Smith, C. M., Padberg, G. W., van Engelen, B. G. M., de Greef, J. C., ... van der Maarel, S. M. (2012). Digenic inheritance of an SMCHD1 mutation and an FSHD-permissive D4Z4 allele causes facioscapulohumeral muscular dystrophy type 2. *Nature Genetics*, *44*(12), 1370–1374. https://doi.org/10.1038/ng.2454
+
+Lemmers, R. J. L. F., van der Vliet, P. J., Balog, J., Goeman, J. J., Arindrarto, W., Krom, Y. D., Straasheijm, K. R., Debipersad, R. D., Ozel, G., Sowden, J., Snider, L., Mul, K., Sacconi, S., van Engelen, B., Tapscott, S. J., Tawil, R., & van der Maarel, S. M. (2018). Deep characterization of a common D4Z4 variant identifies biallelic DUX4 expression as a modifier for disease penetrance in FSHD2. *European Journal of Human Genetics*, *26*(1), 94–106. https://doi.org/10.1038/s41431-017-0015-0
+
+Lemmers, R. J. L. F., van der Vliet, P. J., Blatnik, A., Balog, J., Knijff, P., Tapscott, S. J., & van der Maarel, S. M. (2021). Chromosome 10q-linked FSHD identifies DUX4 as principal disease gene. *Journal of Medical Genetics*, *59*(2), 180–188. https://doi.org/10.1136/jmedgenet-2020-107474
+
+Moriatis, J. S., Himeda, C. L., Ma, K. A. C., & Jones, P. L. (2024). Exchange of subtelomeric regions between chromosomes 4q and 10q reverts the FSHD genotype and phenotype. *Science Advances*, *10*(18), Article eadl1922. https://doi.org/10.1126/sciadv.adl1922
 
 Strafella, C., Megalizzi, D., Trastulli, G., Proietti Piorgo, E., Colantoni, L., Tasca, G., Monforte, M., Zampatti, S., Primiano, G., Sancricca, C., Bortolani, S., Torchia, E., Ravera, B., Torri, F., Gadaleta, G., Risi, B., Caria, F., Gerardi, F., Carraro, E., ... Giardina, E. (2024). Integrating D4Z4 methylation analysis into clinical practice: Improvement of FSHD molecular diagnosis through distinct thresholds for 4qA/4qA and 4qA/4qB patients. *Clinical Epigenetics*, *16*, Article 148. https://doi.org/10.1186/s13148-024-01747-2
 
+van der Vliet, P. J., Lemmers, R. J. L. F., Balog, J.,"; Wohlgemuth, M., Baechner, L., Tapscott, S. J., Tawil, R., & van der Maarel, S. M. (2015). A unifying genetic model for facioscapulohumeral muscular dystrophy. *Science*, *375*, 1650. (see also *Current Opinion in Neurology*, *28*, 567–575)
+
 ### FSHD long-read pipelines
+
+Butterfield, R. J., Dunn, D. M., Duval, B., Moldt, S., & Weiss, R. B. (2023). Deciphering D4Z4 CpG methylation gradients in fascioscapulohumeral muscular dystrophy using nanopore sequencing. *Genome Research*, *33*, 1439–1454. https://doi.org/10.1101/gr.277871.123
 
 Huang, M., Zhang, Q., Jiao, J., Shi, J., Xu, Y., Zhang, C., Zhou, R., Liu, W., Liang, Y., Chen, H., Wang, Y., Xu, Z., & Hu, P. (2024). Comprehensive genetic analysis of facioscapulohumeral muscular dystrophy by Nanopore long-read whole-genome sequencing. *Journal of Translational Medicine*, *22*, Article 451. https://doi.org/10.1186/s12967-024-05259-8
 
 Lowenstern, T., Madritsch, S., Horner, D., Brait, N., Lafci, N. G., Schachner, A., Bujalkova, M. G., Hengstschlager, M., Dremsek, P., & Laccone, F. (2026). DUCKS4: A comprehensive workflow for Nanopore sequencing analysis of facioscapulohumeral muscular dystrophy (FSHD). *Human Genomics*, *20*, Article 21. https://doi.org/10.1186/s40246-026-00921-2
+
+Lowenstern, T., Madritsch, S., Horner, D., Brait, N., Lafci, N. G., Schachner, A., Bujalkova, M. G., Hengstschlager, M., Dremsek, P., & Laccone, F. (2025). Rethinking genomics of facioscapulohumeral muscular dystrophy in the telomere-to-telomere era: pitfalls in the hidden landscape of D4Z4 repeats. *European Journal of Human Genetics*. https://doi.org/10.1038/s41431-025-02000-x
 
 Xiao, L. C., Semwal, A., St John, B., Zeglinski, K., Su, S., Lancaster, J., Xue, S., Reversade, B., Ritchie, M. E., Magdinier, F., Blewitt, M. E., & Gouil, Q. (2025). D4Z4End2End: Complete genetic and epigenetic architecture of D4Z4 macrosatellites in FSHD, BAMS and reference cohorts. *medRxiv*. https://doi.org/10.1101/2025.04.24.25326320
 
@@ -504,8 +487,6 @@ Danecek, P., Bonfield, J. K., Liddle, J., Marshall, J., Ohan, V., Pollard, M. O.
 
 Di Tommaso, P., Chatzou, M., Floden, E. W., Barja, P. P., Palumbo, E., & Notredame, C. (2017). Nextflow enables reproducible computational workflows. *Nature Biotechnology*, *35*(4), 316–319. https://doi.org/10.1038/nbt.3820
 
-Kolmogorov, M., Yuan, J., Lin, Y., & Pevzner, P. A. (2019). Assembly of long, error-prone reads using repeat graphs. *Nature Biotechnology*, *37*(5), 540–546. https://doi.org/10.1038/s41587-019-0072-8
-
 Kurtzer, G. M., Sochat, V., & Bauer, M. W. (2017). Singularity: Scientific containers for mobility of compute. *PLOS ONE*, *12*(5), Article e0177459. https://doi.org/10.1371/journal.pone.0177459
 
 Li, H. (2018). Minimap2: Pairwise alignment for nucleotide sequences. *Bioinformatics*, *34*(18), 3094–3100. https://doi.org/10.1093/bioinformatics/bty191
@@ -517,9 +498,5 @@ Martin, M., Patterson, M., Garg, S., Fischer, S. O., Pisanti, N., Klau, G. W., S
 Oxford Nanopore Technologies. (2024a). *Modkit* [Computer software]. https://github.com/nanoporetech/modkit
 
 Oxford Nanopore Technologies. (2024b). *Dorado* [Computer software]. https://github.com/nanoporetech/dorado
-
-Shen, W., Le, S., Li, Y., & Hu, F. (2016). SeqKit: A cross-platform and ultrafast toolkit for FASTA/Q file manipulation. *PLOS ONE*, *11*(10), Article e0163962. https://doi.org/10.1371/journal.pone.0163962
-
-Vaser, R., Sovic, I., Nagarajan, N., & Sikic, M. (2017). Fast and accurate de novo genome assembly from long uncorrected reads. *Genome Research*, *27*(5), 737–746. https://doi.org/10.1101/gr.214270.116
 
 Zheng, Z., Li, S., Su, J., Leung, A. W.-S., Lam, T.-W., & Luo, R. (2022). Symphonizing pileup and full-alignment for deep learning-based long-read variant calling. *Nature Computational Science*, *2*(12), 797–803. https://doi.org/10.1038/s43588-022-00387-x

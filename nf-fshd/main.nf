@@ -192,30 +192,25 @@ try:
 except pd.errors.EmptyDataError:
     pass
 
-# --- Per-read best marker lookup ---
-def get_best_marker(read_id, marker_set):
-    hits = hap_markers[(hap_markers['sseqid'] == read_id) &
-                       (hap_markers['qseqid'].isin(marker_set))]
-    if len(hits) == 0:
-        return None
-    return hits.sort_values('bitscore', ascending=False).iloc[0]['qseqid']
-
-# --- Populate Has_Head / Has_Tail from marker hits ---
+# --- Per-read best marker (pre-indexed for efficiency) ---
 d4z4_read_ids = set(ru_counts['sseqid'])
 
 read_proximal_marker = {}
 read_distal_marker   = {}
 distal_reads = set()
 
-for read_id in d4z4_read_ids:
-    best_prox = get_best_marker(read_id, PROXIMAL_MARKERS)
-    best_dist = get_best_marker(read_id, DISTAL_MARKERS)
-    if best_prox:
-        read_proximal_marker[read_id] = best_prox
+if len(hap_markers) > 0:
+    for read_id, grp in hap_markers[hap_markers['sseqid'].isin(d4z4_read_ids)].groupby('sseqid'):
+        for marker_set, target_dict in [(PROXIMAL_MARKERS, read_proximal_marker),
+                                         (DISTAL_MARKERS, read_distal_marker)]:
+            hits = grp[grp['qseqid'].isin(marker_set)]
+            if len(hits) > 0:
+                best = hits.sort_values('bitscore', ascending=False).iloc[0]['qseqid']
+                target_dict[read_id] = best
+
+    for read_id in read_proximal_marker:
         proximal_reads.add(read_id)
-    if best_dist:
-        read_distal_marker[read_id] = best_dist
-        distal_reads.add(read_id)
+    distal_reads = set(read_distal_marker.keys())
 
 # --- Tier 2: Restriction motif voting ---
 CHR4_MOTIF  = 'CTAGGTCTAGG'
@@ -369,12 +364,11 @@ def classify_haplotype(read_id, chromosome):
     elif best_dist == '4qB_pLAM':
         hap = prefix + 'B' if prefix else '4qB'
     elif best_prox:
-        # No distal hit — use proximal marker, but force prefix to chromosome
+        # No distal hit — use proximal marker, force prefix to chromosome
         prox_suffix = 'A' if 'A_D4F104S1' in best_prox else 'B'
         hap = prefix + prox_suffix if prefix else 'Unknown'
-    elif read_id in proximal_reads:
-        hap = prefix if prefix else 'Unknown'
     else:
+        # No haplotype markers — generic label from chromosome
         hap = prefix if prefix else 'Unknown'
 
     return hap, chimeric
@@ -430,43 +424,28 @@ for chrom in ['chr4', 'chr10']:
     elif len(distinct) <= 2:
         warnings.append(f'PASS: {chrom} has {len(distinct)} typed haplotype(s): {distinct}')
 
+    # Check 2/3: Completeness consistency (A-type and B-type alleles)
     for hap in chrom_df['Haplotype'].unique():
+        if hap in GENERIC:
+            continue
         grp = chrom_df[chrom_df['Haplotype'] == hap]
-
-        # Check 2: Completeness consistency for A-type alleles
-        if hap in A_TYPES:
-            complete = grp[grp['Has_Head'] & grp['Has_Tail']]
-            if len(complete) > 0:
-                min_complete_len = int(complete['Read_Length'].min())
-                max_complete_ru  = int(complete['RU_Count'].max())
-                for idx in grp.index:
-                    r = grp.loc[idx]
-                    if r['Has_Tail'] and not r['Has_Head']:
-                        flags = []
-                        if r['Read_Length'] >= min_complete_len:
-                            flags.append('longer_than_complete')
-                        if r['RU_Count'] > max_complete_ru:
-                            flags.append('RU_exceeds_complete')
-                        if flags:
-                            result.at[idx, 'Flag'] = '; '.join(flags)
-
-        # Check 3: Completeness consistency for B-type alleles
-        if hap in B_TYPES:
-            complete = grp[grp['Has_Head'] & grp['Has_Tail']]
-            if len(complete) > 0:
-                min_complete_len = int(complete['Read_Length'].min())
-                max_complete_ru  = int(complete['RU_Count'].max())
-                for idx in grp.index:
-                    r = grp.loc[idx]
-                    if not (r['Has_Head'] and r['Has_Tail']):
-                        flags = []
-                        if r['Read_Length'] >= min_complete_len:
-                            flags.append('longer_than_complete')
-                        if r['RU_Count'] > max_complete_ru:
-                            flags.append('RU_exceeds_complete')
-                        if flags:
-                            existing = result.at[idx, 'Flag']
-                            result.at[idx, 'Flag'] = (existing + '; ' if existing else '') + '; '.join(flags)
+        complete = grp[grp['Has_Head'] & grp['Has_Tail']]
+        if len(complete) == 0:
+            continue
+        min_complete_len = int(complete['Read_Length'].min())
+        max_complete_ru  = int(complete['RU_Count'].max())
+        for idx in grp.index:
+            r = grp.loc[idx]
+            if r['Has_Head'] and r['Has_Tail']:
+                continue  # skip complete reads
+            flags = []
+            if r['Read_Length'] >= min_complete_len:
+                flags.append('longer_than_complete')
+            if r['RU_Count'] > max_complete_ru:
+                flags.append('RU_exceeds_complete')
+            if flags:
+                existing = result.at[idx, 'Flag']
+                result.at[idx, 'Flag'] = (existing + '; ' if existing else '') + '; '.join(flags)
 
     # Check 4: Fragment RU sanity
     all_complete = chrom_df[chrom_df['Has_Head'] & chrom_df['Has_Tail'] &
@@ -488,7 +467,8 @@ for idx in result.index:
         result.at[idx, 'Flag'] = (existing + '; ' + flag) if existing else flag
 
 result = result.sort_values('RU_Count', ascending=False)
-result.to_csv(f'{sample_id}.reads_annotated.tsv', sep='\\t', index=False)
+# Drop internal Flag column before writing (validation info goes to validation.txt)
+result.drop(columns=['Flag']).to_csv(f'{sample_id}.reads_annotated.tsv', sep='\\t', index=False)
 
 # --- Validation report ---
 with open(f'{sample_id}.validation.txt', 'w') as vf:
@@ -584,14 +564,15 @@ with open('complete_read_ids.txt', 'w') as f:
         f.write(rid + '\\n')
 PYEOF
 
-    # Extract complete reads into a separate BAM (empty if none)
+    # Extract complete reads into a separate BAM
     if [ -s complete_read_ids.txt ]; then
-        samtools view -b -h -N complete_read_ids.txt -@ ${task.cpus} ${bam} -o ${sample_id}.complete_reads.bam
-        samtools index -@ ${task.cpus} ${sample_id}.complete_reads.bam
+        samtools view -b -h -N complete_read_ids.txt -@ ${task.cpus} ${bam} \
+            -o ${sample_id}.complete_reads.bam
     else
-        samtools view -b -h -@ ${task.cpus} ${bam} -o ${sample_id}.complete_reads.bam -e 'False'
-        samtools index -@ ${task.cpus} ${sample_id}.complete_reads.bam
+        # Create empty BAM with header only
+        samtools view -H -b ${bam} -o ${sample_id}.complete_reads.bam
     fi
+    samtools index -@ ${task.cpus} ${sample_id}.complete_reads.bam
     """
 }
 
@@ -657,7 +638,8 @@ EOF
 
 // ============================================================================
 // Step 6: Generate report
-//   repeats.tsv    — grouped by (Chromosome, Haplotype, Has_Head, Has_Tail)
+//   repeats.tsv    — grouped by (Chromosome, Haplotype, Head, Tail);
+//                    RU_Count prefixed with >= for incomplete reads
 //   methylation.tsv — DR1 and DUX4-PAS means with atlas/literature references
 // ============================================================================
 process REPORT {
@@ -685,8 +667,8 @@ sample_id = sys.argv[1]
 df = pd.read_csv(f'{sample_id}.reads_annotated.tsv', sep='\\t')
 
 # --- repeats.tsv ---
-# Group by (Chromosome, Haplotype, Permissive, Has_Head, Has_Tail).
-# Report the maximum RU_Count, read count, and flagged count per group.
+# Group by (Chromosome, Haplotype, Has_Head, Has_Tail).
+# RU_Count prefixed with >= for incomplete reads (lower bound).
 group_cols = ['Chromosome', 'Haplotype', 'Has_Head', 'Has_Tail']
 repeats = (
     df.groupby(group_cols, dropna=False)

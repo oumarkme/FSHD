@@ -6,6 +6,7 @@ nextflow.enable.dsl = 2
 // Step 1: Extract FSHD-region reads from hg38 BAM/CRAM
 // ============================================================================
 process EXTRACT_FSHD_READS {
+    tag "${sample_id}"
 
     input:
     path input_file
@@ -15,6 +16,11 @@ process EXTRACT_FSHD_READS {
 
     output:
     path "${sample_id}.subset.bam", emit: bam
+
+    stub:
+    """
+    touch ${sample_id}.subset.bam
+    """
 
     script:
     """
@@ -41,6 +47,7 @@ EOF
 // Step 2: Realign to T2T-CHM13v2.0, preserving MM/ML and HP/PS tags
 // ============================================================================
 process ALIGN_T2T {
+    tag "${sample_id}"
 
     input:
     path subset_bam
@@ -50,6 +57,11 @@ process ALIGN_T2T {
     output:
     path "${sample_id}.t2t.bam",     emit: bam
     path "${sample_id}.t2t.bam.bai", emit: bai
+
+    stub:
+    """
+    touch ${sample_id}.t2t.bam ${sample_id}.t2t.bam.bai
+    """
 
     script:
     def tags = 'MM,ML,HP,PS'
@@ -68,6 +80,7 @@ process ALIGN_T2T {
 // Step 3: Extract D4Z4 candidate reads from T2T BAM
 // ============================================================================
 process EXTRACT_D4Z4 {
+    tag "${sample_id}"
     publishDir "${params.outdir}/${sample_id}", mode: 'copy', pattern: '*.d4z4.bam*'
 
     input:
@@ -78,6 +91,11 @@ process EXTRACT_D4Z4 {
     output:
     path "${sample_id}.d4z4.bam",     emit: bam
     path "${sample_id}.d4z4.bam.bai", emit: bai
+
+    stub:
+    """
+    touch ${sample_id}.d4z4.bam ${sample_id}.d4z4.bam.bai
+    """
 
     script:
     """
@@ -120,6 +138,7 @@ EOF
 //   10q    — no marker hits, chr10
 // ============================================================================
 process BLAST_ANNOTATE {
+    tag "${sample_id}"
     publishDir "${params.outdir}/${sample_id}", mode: 'copy',
         pattern: '{*.validation.txt,*.complete_reads.bam,*.complete_reads.bam.bai}'
 
@@ -136,6 +155,11 @@ process BLAST_ANNOTATE {
     path "${sample_id}.validation.txt",            emit: validation
     path "${sample_id}.complete_reads.bam",        emit: complete_bam
     path "${sample_id}.complete_reads.bam.bai",    emit: complete_bai
+
+    stub:
+    """
+    touch ${sample_id}.reads_annotated.tsv ${sample_id}.validation.txt ${sample_id}.complete_reads.bam ${sample_id}.complete_reads.bam.bai
+    """
 
     script:
     """
@@ -168,7 +192,12 @@ with pysam.AlignmentFile('${bam}', 'rb') as af:
                 read_len[read.query_name] = read.query_length
 
 # --- D4Z4 RU counting (filter alignment length > 1500 bp) ---
-d4z4 = pd.read_csv('d4z4.blast', sep='\\t', header=None, names=blast_cols)
+# Tolerate an empty BLAST result (a sample with no D4Z4-bearing reads) instead
+# of crashing; downstream code then emits an empty annotation table cleanly.
+try:
+    d4z4 = pd.read_csv('d4z4.blast', sep='\\t', header=None, names=blast_cols)
+except pd.errors.EmptyDataError:
+    d4z4 = pd.DataFrame(columns=blast_cols)
 d4z4 = d4z4[d4z4['length'] > 1500]
 ru_counts = d4z4.groupby('sseqid').size().reset_index(name='RU_Count')
 
@@ -582,6 +611,7 @@ PYEOF
 //   Uses HP tags carried from the input through ALIGN_T2T.
 // ============================================================================
 process METHYLATION {
+    tag "${sample_id}"
 
     input:
     path t2t_bam
@@ -594,6 +624,11 @@ process METHYLATION {
     path "${sample_id}.methylation_HP1.bed",       emit: hp1_bed
     path "${sample_id}.methylation_HP2.bed",       emit: hp2_bed
     path "${sample_id}.methylation_ungrouped.bed", emit: ungrouped_bed
+
+    stub:
+    """
+    touch ${sample_id}.methylation_HP1.bed ${sample_id}.methylation_HP2.bed ${sample_id}.methylation_ungrouped.bed
+    """
 
     script:
     """
@@ -643,6 +678,7 @@ EOF
 //   methylation.tsv — DR1 and DUX4-PAS means with atlas/literature references
 // ============================================================================
 process REPORT {
+    tag "${sample_id}"
     publishDir "${params.outdir}/${sample_id}", mode: 'copy'
 
     input:
@@ -655,6 +691,11 @@ process REPORT {
     output:
     path "${sample_id}.repeats.tsv",     emit: repeats
     path "${sample_id}.methylation.tsv", emit: methylation
+
+    stub:
+    """
+    touch ${sample_id}.repeats.tsv ${sample_id}.methylation.tsv
+    """
 
     script:
     """
@@ -783,18 +824,26 @@ PYEOF
 //   Tags are carried through realignment via samtools fastq -T and minimap2 -y.
 // ============================================================================
 workflow {
-    if (!params.input) {
-        error "Please provide an input BAM/CRAM file with --input"
-    }
+    // --- Validate required parameters (clear errors instead of cryptic staging failures) ---
+    if (!params.input)   error "Missing --input: an hg38-aligned BAM/CRAM with HP/PS + MM/ML tags"
+    if (!params.ref_t2t) error "Missing --ref_t2t: the T2T-CHM13v2.0 reference FASTA (with its .fai index alongside)"
 
-    def input_file = file(params.input)
+    def input_file = file(params.input, checkIfExists: true)
     def sample_id  = input_file.baseName
-    def ref_t2t     = file(params.ref_t2t)
-    def ref_t2t_fai = file("${params.ref_t2t}.fai")
-    def ref_hg38    = file(params.ref_hg38)
+    def is_cram    = input_file.name.endsWith('.cram')
 
-    def idx_ext   = input_file.name.endsWith('.cram') ? '.crai' : '.bai'
-    def input_idx = file("${params.input}${idx_ext}")
+    // --ref_hg38 is only consumed to decode CRAM. BAM input can omit it; we then
+    // stage a placeholder so the EXTRACT_FSHD_READS signature stays uniform.
+    if (is_cram && !params.ref_hg38)
+        error "CRAM input requires --ref_hg38 (the reference the CRAM was aligned to)"
+    def ref_hg38 = params.ref_hg38 ? file(params.ref_hg38, checkIfExists: true)
+                                   : file("${projectDir}/assets/NO_REF", checkIfExists: true)
+
+    def ref_t2t     = file(params.ref_t2t,          checkIfExists: true)
+    def ref_t2t_fai = file("${params.ref_t2t}.fai", checkIfExists: true)
+
+    def idx_ext   = is_cram ? '.crai' : '.bai'
+    def input_idx = file("${params.input}${idx_ext}", checkIfExists: true)
 
     // Step 1: Extract FSHD-region reads
     EXTRACT_FSHD_READS(input_file, input_idx, ref_hg38, sample_id)

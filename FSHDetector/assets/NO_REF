@@ -1,0 +1,4 @@
+# Placeholder staged in place of --ref_hg38 when the input is a BAM (which does
+# not need a reference to decode). Do not delete: the workflow references this
+# file so the EXTRACT_FSHD_READS process signature stays uniform across
+# BAM and CRAM inputs. It is never read by any tool.

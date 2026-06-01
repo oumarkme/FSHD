@@ -1,12 +1,19 @@
 # Old unrelated project
 archive/
 
-# Apptainer/Singularity images
-nf-fshd/*.sif
-
 # Runtime logs
 *.log
+batch_logs/
 
 # nextflow temporary files
 .nextflow*
 .nextflow/
+
+# folder for manuscript resources
+manuscript/
+
+# Local-only: not needed to run FSHDetector
+run_all_fshd.sh
+docs/
+.vscode/
+.claude/

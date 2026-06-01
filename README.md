@@ -1,6 +1,331 @@
-# nf-fshd: ONT D4Z4 Repeat Unit Counting, Haplotyping, and Methylation Pipeline
+# FSHDetector: ONT D4Z4 Repeat Unit Counting, Haplotyping, and Methylation Pipeline
 
 A Nextflow DSL2 pipeline for FSHD diagnosis from hg38-aligned ONT BAM/CRAM files with HP tags from upstream phasing. The pipeline resolves all four D4Z4 alleles (2× chr4, 2× chr10), determines 4qA-L/4qA-S/4qB haplotype, counts D4Z4 repeat units per allele via per-read BLAST annotation, validates results against biological constraints, and reports allele-specific CpG methylation at the distal DUX4 region. All analysis coordinates reference **T2T-CHM13v2.0**.
+
+> **Just want to run it?** → **[Quick start](#quick-start)**. You need a phased, hg38-aligned ONT BAM/CRAM plus [Nextflow and Conda](#prerequisites) — no other installs.
+
+## Contents
+
+**Getting started**
+- [Usage](#usage) — install, references, and how to run · [Prerequisites](#prerequisites) · [Reference genomes](#reference-genomes) · [Quick start](#quick-start) · [Profiles](#profiles) · [Input](#input)
+- [Upstream prerequisites](#upstream-prerequisites) — how to produce the input BAM/CRAM
+- [Output](#output) — files, [`repeats.tsv`](#repeatstsv), [`methylation.tsv`](#methylationtsv)
+
+**How it works**
+- [Pipeline flow diagram](#pipeline-flow-diagram) · [Pipeline steps](#pipeline-steps)
+- [Algorithm](#algorithm-blast-based-per-read-annotation) — per-read BLAST annotation, chromosome & haplotype logic
+- [Biological background](#biological-background) — D4Z4 & FSHD, haplotype backgrounds, array sizes
+- [Technical constraints (ONT)](#technical-constraints-ont-sequencing) — read length, coverage, HP tags, chr4/chr10
+- [Reference genome & query sequences](#reference-genome-and-query-sequences)
+- [Software](#software) · [Known limitations](#known-limitations) · [References](#references)
+
+---
+
+## Usage
+
+### Prerequisites
+
+Only two host tools are required:
+
+| Tool | Purpose | Install |
+|------|---------|---------|
+| **Nextflow** (≥23.04) | Workflow engine | https://www.nextflow.io/docs/latest/install.html |
+| **Conda** (Miniforge, ships `mamba`) | Builds the analysis environment automatically | https://github.com/conda-forge/miniforge |
+
+Nothing else needs to be installed: on the first run Nextflow builds the tool environment (samtools, minimap2, BLAST+, modkit, pysam, pandas) from `environment.yml` and caches it for later runs.
+
+### Reference genomes
+
+Two FASTA references are needed (place the T2T `.fai` index next to its FASTA):
+
+| Parameter | Reference | Notes |
+|-----------|-----------|-------|
+| `--ref_hg38` | The hg38 build your input was aligned to | Decodes CRAM and is the coordinate basis for region extraction. **Required for CRAM input; optional for BAM.** |
+| `--ref_t2t` | T2T-CHM13v2.0 (`GCF_009914755.1_T2T-CHM13v2.0_genomic.fna`) | All analysis coordinates. Index once: `samtools faidx <t2t.fna>`. |
+
+### Quick start
+
+```bash
+git clone https://github.com/oumarkme/FSHD.git
+cd FSHD
+
+nextflow run FSHDetector/main.nf \
+    --input    /path/to/sample.bam \
+    --ref_hg38 /path/to/hg38.fa \
+    --ref_t2t  /path/to/T2T-CHM13v2.0.fna \
+    --outdir   results
+```
+
+Conda is the default engine, so the first run builds the environment (a few minutes) and reuses it afterwards. Per-sample results are written under `--outdir` (default `results/`).
+
+A convenience wrapper is also provided — it just adds `-resume`:
+
+```bash
+bash FSHDetector/run.sh /path/to/sample.bam \
+    --ref_hg38 /path/to/hg38.fa --ref_t2t /path/to/T2T-CHM13v2.0.fna
+```
+
+### Profiles
+
+| Profile | Engine | When to use |
+|---------|--------|-------------|
+| *(default)* or `-profile conda` | Conda (from `environment.yml`) | Normal runs — recommended for everyone |
+| `-profile test` | none (stub) | Wiring smoke-test with no data (see `nextflow.config`) |
+
+### Input
+
+hg38-aligned BAM/CRAM with **HP/PS tags** (from any phasing tool) and **MM/ML tags** (from basecalling). The matching `.bai`/`.crai` index must sit next to it. BAM input does not require `--ref_hg38`; CRAM input does. See [Upstream prerequisites](#upstream-prerequisites) for how to produce this file.
+
+---
+
+## Upstream prerequisites
+
+These steps are performed outside this pipeline. The pipeline input is an hg38-aligned BAM/CRAM carrying both methylation tags (MM/ML) from basecalling and haplotype tags (HP/PS) from phasing. Any phasing tool that writes standard HP/PS tags is compatible.
+
+| Step | Tool | Version | Output | Reference |
+|------|------|---------|--------|-----------|
+| Basecalling | Dorado (SUP + `--modified-bases 5mCG_5hmCG`) | ≥0.7.0 | Unaligned modBAM with MM/ML tags | Oxford Nanopore Technologies (2024b) |
+| Genome-wide alignment | minimap2 (`-ax lr:hq`) | ≥2.28 | hg38-aligned BAM | Li (2018) |
+| Variant calling | e.g., Clair3 | — | VCF (SNPs for phasing) | Zheng et al. (2022) |
+| Phasing + haplotagging | e.g., LongPhase, WhatsHap | — | BAM with HP/PS tags | Lin et al. (2022); Martin et al. (2023) |
+
+---
+
+## Output
+
+Seven published files per sample:
+
+| File | Description |
+|------|-------------|
+| `{SAMPLE_ID}.d4z4.bam` | D4Z4 candidate reads aligned to T2T-CHM13v2.0 |
+| `{SAMPLE_ID}.d4z4.bam.bai` | BAM index |
+| `{SAMPLE_ID}.complete_reads.bam` | Complete reads (Has_Head AND Has_Tail) extracted from D4Z4 BAM |
+| `{SAMPLE_ID}.complete_reads.bam.bai` | BAM index |
+| `{SAMPLE_ID}.repeats.tsv` | D4Z4 repeat unit counts grouped by haplotype |
+| `{SAMPLE_ID}.methylation.tsv` | CpG methylation at distal D4Z4/DUX4 region |
+| `{SAMPLE_ID}.validation.txt` | Biological validation report with complete read details |
+
+### repeats.tsv
+
+One row per (Chromosome, Haplotype, Head, Tail) group. Chr4 rows appear above chr10 rows.
+
+| Column | Description |
+|--------|-------------|
+| Chromosome | chr4 or chr10 |
+| Haplotype | 4qA-S / 4qA-L / 4qA / 4qB / 4q / 10qA / 10qB / 10q (prefix matches chromosome) |
+| RU_Count | Maximum RU count among reads in this group. Prefixed with **≥** for incomplete reads (missing Head or Tail), indicating the count is a lower bound |
+| Head | TRUE if reads in this group carry a proximal marker (D4F104S1 or p13E-11) |
+| Tail | TRUE if reads in this group carry a distal marker (4qA/4qB/10qA pLAM) |
+| Read_Count | Number of reads in this group |
+
+### methylation.tsv
+
+| Column | Description |
+|--------|-------------|
+| Haplotype | HP1, HP2, or Combined |
+| Region | DR1 or DUX4-PAS |
+| Methylation | Mean % modified across CpGs in region |
+| N_CpG | Number of CpGs with data |
+| Ref_Atlas (Mean (SD) %) | ONT methylation reference atlas (\~45–49 healthy controls; Huang et al., 2024) |
+| Ref_Atlas (IQR %) | Interquartile range [Q1, Q2, Q3] computed from all CpG REF_METH values in the reference atlas |
+| Lit_Caputo (%) | Diagnostic threshold (Caputo et al., 2022; Strafella et al., 2024) |
+
+**Reference values (T2T coordinates):**
+
+| Region | T2T coordinates | Ref_Atlas Mean (SD) | Ref_Atlas IQR [Q1, Q2, Q3] | Lit_Caputo threshold |
+|--------|----------------|---------------------|---------------------------|---------------------|
+| DR1 | chr4:193,541,000–193,541,600 | 54.70% (1.97%) | [53.07%, 54.89%, 56.83%] | CpG1 ≤ 53% |
+| DUX4-PAS | chr4:193,543,430–193,543,634 | 51.81% (0.23%) | [51.63%, 51.75%, 51.99%] | CpG6 ≤ 78% |
+
+---
+
+## Pipeline flow diagram
+
+```
+Input: hg38 BAM/CRAM (HP/PS + MM/ML tags)
+    |
+    v
+Step 1: EXTRACT_FSHD_READS (hg38 regions)
+    |
+    v
+Step 2: ALIGN_T2T (preserve MM/ML/HP/PS) -------.
+    |                                            |
+    v                                            |
+Step 3: EXTRACT_D4Z4                             |
+    |                                            |
+    v                                            |
+Step 4: BLAST_ANNOTATE                           |
+(RU count, anchors, BlnI+XapI chr,               |
+ haplotype, validation)                          |
+    |                                            |
+    |                     Step 5: METHYLATION <--'
+    |                     (modkit --phased from T2T BAM)
+    |                            |
+    '----------+-----------------'
+               |
+               v
+           Step 6: REPORT
+           (repeats.tsv + methylation.tsv)
+```
+
+---
+
+## Pipeline steps
+
+### Step 1: Extract FSHD-region reads (EXTRACT_FSHD_READS)
+
+Extract reads from FSHD-associated regions in hg38 coordinates plus unmapped reads.
+
+```
+BED (hg38):
+    chr4:189000000-190500000     # 4q35 D4Z4 flanking
+    chr10:133000000-134000000    # 10q26 D4Z4 flanking
+
+samtools view -b -h -M -L regions.bed -> target.bam
+samtools view -b -f 4 -> unmapped.bam
+samtools merge -> subset.bam
+```
+
+### Step 2: Realign to T2T-CHM13v2.0 (ALIGN_T2T)
+
+Realign to T2T, preserving MM, ML, HP, PS tags via `samtools fastq -T` and `minimap2 -y`.
+
+`minimap2 -ax lr:hq -y --eqx --secondary=no | samtools sort`
+
+### Step 3: Extract D4Z4 candidate reads (EXTRACT_D4Z4)
+
+```
+BED (T2T):
+    chr4:193230000-193610000
+    chr10:134560000-134800000
+```
+
+Published output: `{SAMPLE_ID}.d4z4.bam` + `.bai`
+
+### Step 4: Chromosome assignment, feature annotation, and validation (BLAST_ANNOTATE)
+
+BLAST-based per-read annotation following the approach of Lowenstern et al. (2026), Huang et al. (2024), and Butterfield et al. (2023). Three BLAST queries annotate each read, followed by biological validation:
+
+```
+blastn d4z4.fa              -> RU counting (hits > 1500 bp)
+blastn haplotype_markers.fa -> 6 haplotype-specific markers (proximal + distal)
+blastn P13E11.fasta         -> additional proximal anchor
+```
+
+After classification, the pipeline validates results against biological constraints and flags impossible configurations in a `Flag` column and a `validation.txt` report:
+
+| Check | Rule | Flag |
+|-------|------|------|
+| Haplotype count | At most 2 typed haplotypes per chromosome (excluding 4q/10q fragments) | WARN in validation.txt |
+| Completeness consistency | An incomplete read longer than the shortest complete read in the same haplotype group | `longer_than_complete` |
+| RU consistency | An incomplete read with more RUs than the max complete read RU in the same haplotype group | `RU_exceeds_complete` |
+| Fragment RU sanity | A fragment read (4q/10q) with RU exceeding the max complete RU across all alleles on that chromosome | `RU_exceeds_all_alleles` |
+| Chimeric detection | Proximal marker type ≠ distal marker type (possible translocation or chimeric read) | `chimeric` |
+
+### Step 5: Per-allele CpG methylation (METHYLATION)
+
+```
+modkit pileup <t2t.bam> meth_out/ \
+    --ref <t2t_reference.fna> \
+    --cpg --combine-strands \
+    --modified-bases 5mC \
+    --phased \
+    --include-bed meth_targets.bed
+```
+
+Target regions in `meth_targets.bed`: chr4:193,540,172–193,543,634 and chr10:134,738,000–134,741,148. Runs independently; only needs the T2T BAM from Step 2.
+
+### Step 6: Generate report (REPORT)
+
+Produces `repeats.tsv` and `methylation.tsv` from BLAST annotations and methylation pileup data.
+
+---
+
+## Algorithm: BLAST-based per-read annotation
+
+Each read is annotated independently after BLAST alignment against three query files (D4Z4 repeat unit, 6 haplotype-specific markers, P13E11). No consensus assembly or allele separation is performed; the maximum RU count observed across reads within a (Chromosome, Haplotype, Head, Tail) group is reported.
+
+### Chromosome and haplotype determination flow
+
+```
+Read with D4Z4 BLAST hits (RU ≥ 1, alignment > 1500 bp)
+│
+├─ EVIDENCE GATHERING (parallel)
+│   ├─ BAM alignment → initial chr (Tier 1, weakest)
+│   ├─ BlnI motif count: CTAGGTCTAGG (chr4) vs CTAGGCCTAGG (chr10)
+│   ├─ XapI motif count: [AG]AATT[CT] (chr4-specific)
+│   ├─ Best proximal marker: 4qA / 4qB / 10qA D4F104S1 (by bitscore)
+│   ├─ Best distal marker:   4qA / 4qB / 10qA pLAM (by bitscore)
+│   └─ P13E11 anchor (proximal completeness)
+│
+├─ CHROMOSOME ASSIGNMENT (three tiers, strongest last)
+│   │
+│   ├─ Tier 1: BAM alignment to T2T → chr4 or chr10 (initial)
+│   │
+│   ├─ Tier 2: BlnI + XapI motif voting (overrides Tier 1)
+│   │   chr4_score  = BlnI_chr4 + XapI
+│   │   chr10_score = BlnI_chr10
+│   │   ├─ chr10_score > chr4_score → chr10
+│   │   ├─ chr4_score > chr10_score → chr4
+│   │   └─ tie → retain Tier 1
+│   │
+│   └─ Tier 3: Haplotype marker concordance (strongest)
+│       ├─ proximal AND distal agree on chr → OVERRIDE to that chr
+│       ├─ proximal AND distal disagree → keep Tier 1/2 (chimeric)
+│       └─ single marker + motif total = 0 → use marker as tiebreaker
+│
+├─ HAPLOTYPE ASSIGNMENT (prefix always matches chromosome)
+│   │
+│   ├─ Has distal marker?
+│   │   ├─ 4qA_pLAM or 10qA_pLAM → A-type
+│   │   │   ├─ chr = chr4 + 4qA_pLAM → subtype by terminal D4Z4 unit:
+│   │   │   │   ├─ closest D4Z4 to pLAM > 2800 bp → 4qA-L
+│   │   │   │   ├─ closest D4Z4 to pLAM ≤ 2800 bp → 4qA-S
+│   │   │   │   └─ no D4Z4 position data → 4qA
+│   │   │   ├─ chr = chr4 + 10qA_pLAM → 4qA (translocation)
+│   │   │   ├─ chr = chr10 + any A-type pLAM → 10qA
+│   │   │   └─ unknown chr → Unknown
+│   │   │
+│   │   └─ 4qB_pLAM → B-type
+│   │       ├─ chr = chr4 → 4qB
+│   │       └─ chr = chr10 → 10qB
+│   │
+│   ├─ No distal, has proximal D4F104S1?
+│   │   ├─ *A_D4F104S1 → *qA (prefix from chromosome)
+│   │   └─ *B_D4F104S1 → *qB (prefix from chromosome)
+│   │
+│   └─ No markers at all?
+│       ├─ chr4 → 4q
+│       └─ chr10 → 10q
+│
+├─ CHIMERIC CHECK
+│   └─ proximal marker type ≠ distal marker type → Chimeric = TRUE
+│
+├─ PERMISSIVE CHECK (sequence-dependent, not chromosome-dependent)
+│   └─ Distal_Marker = 4qA_pLAM AND Chimeric = FALSE → Permissive = TRUE
+│       (functional ATTAAA PAS; applies to chr4 or chr10 translocations)
+│       All other cases → Permissive = FALSE
+│
+├─ COMPLETENESS
+│   ├─ Has_Head = proximal marker hit (D4F104S1 or P13E11)
+│   └─ Has_Tail = distal marker hit (4qA/4qB/10qA pLAM)
+│
+└─ OUTPUT: reads_annotated.tsv
+    Chromosome, Haplotype, Permissive, RU_Count, Has_Head, Has_Tail,
+    Proximal_Marker, Distal_Marker, Chimeric, Chr_Confidence, ...
+```
+
+### Chromosome confidence scoring
+
+| Level | Criterion |
+|-------|-----------|
+| HIGH | All motifs agree (minority side score = 0), or majority ≥ 80% of total motifs |
+| MEDIUM | Majority ≥ 60% but < 80% of total motifs |
+| LOW | No motif evidence (BAM-only), or majority < 60% (mixed evidence) |
+
+### 4qA-S / 4qA-L subtyping
+
+4qA-S (standard) and 4qA-L (long) differ only in the length of the most distal (terminal) D4Z4 repeat unit adjacent to pLAM (Lemmers et al., 2018). For reads with a `4qA_pLAM` hit, the pipeline finds the D4Z4 BLAST hit closest to the pLAM position: **>2800 bp** → **4qA-L** (full-length \~3.3 kb); **≤2800 bp** → **4qA-S** (truncated \~1.8 kb). Both subtypes are permissive.
 
 ---
 
@@ -93,271 +418,6 @@ A read is **"complete"** when it contains both the proximal p13E-11 anchor AND t
 
 ---
 
-## Algorithm: BLAST-based per-read annotation
-
-Each read is annotated independently after BLAST alignment against three query files (D4Z4 repeat unit, 6 haplotype-specific markers, P13E11). No consensus assembly or allele separation is performed; the maximum RU count observed across reads within a (Chromosome, Haplotype, Head, Tail) group is reported.
-
-### Chromosome and haplotype determination flow
-
-```
-Read with D4Z4 BLAST hits (RU ≥ 1, alignment > 1500 bp)
-│
-├─ EVIDENCE GATHERING (parallel)
-│   ├─ BAM alignment → initial chr (Tier 1, weakest)
-│   ├─ BlnI motif count: CTAGGTCTAGG (chr4) vs CTAGGCCTAGG (chr10)
-│   ├─ XapI motif count: [AG]AATT[CT] (chr4-specific)
-│   ├─ Best proximal marker: 4qA / 4qB / 10qA D4F104S1 (by bitscore)
-│   ├─ Best distal marker:   4qA / 4qB / 10qA pLAM (by bitscore)
-│   └─ P13E11 anchor (proximal completeness)
-│
-├─ CHROMOSOME ASSIGNMENT (three tiers, strongest last)
-│   │
-│   ├─ Tier 1: BAM alignment to T2T → chr4 or chr10 (initial)
-│   │
-│   ├─ Tier 2: BlnI + XapI motif voting (overrides Tier 1)
-│   │   chr4_score  = BlnI_chr4 + XapI
-│   │   chr10_score = BlnI_chr10
-│   │   ├─ chr10_score > chr4_score → chr10
-│   │   ├─ chr4_score > chr10_score → chr4
-│   │   └─ tie → retain Tier 1
-│   │
-│   └─ Tier 3: Haplotype marker concordance (strongest)
-│       ├─ proximal AND distal agree on chr → OVERRIDE to that chr
-│       ├─ proximal AND distal disagree → keep Tier 1/2 (chimeric)
-│       └─ single marker + motif total = 0 → use marker as tiebreaker
-│
-├─ HAPLOTYPE ASSIGNMENT (prefix always matches chromosome)
-│   │
-│   ├─ Has distal marker?
-│   │   ├─ 4qA_pLAM or 10qA_pLAM → A-type
-│   │   │   ├─ chr = chr4 + 4qA_pLAM → subtype by terminal D4Z4 unit:
-│   │   │   │   ├─ closest D4Z4 to pLAM > 2800 bp → 4qA-L
-│   │   │   │   ├─ closest D4Z4 to pLAM ≤ 2800 bp → 4qA-S
-│   │   │   │   └─ no D4Z4 position data → 4qA
-│   │   │   ├─ chr = chr4 + 10qA_pLAM → 4qA (translocation)
-│   │   │   ├─ chr = chr10 + any A-type pLAM → 10qA
-│   │   │   └─ unknown chr → Unknown
-│   │   │
-│   │   └─ 4qB_pLAM → B-type
-│   │       ├─ chr = chr4 → 4qB
-│   │       └─ chr = chr10 → 10qB
-│   │
-│   ├─ No distal, has proximal D4F104S1?
-│   │   ├─ *A_D4F104S1 → *qA (prefix from chromosome)
-│   │   └─ *B_D4F104S1 → *qB (prefix from chromosome)
-│   │
-│   └─ No markers at all?
-│       ├─ chr4 → 4q
-│       └─ chr10 → 10q
-│
-├─ CHIMERIC CHECK
-│   └─ proximal marker type ≠ distal marker type → Chimeric = TRUE
-│
-├─ PERMISSIVE CHECK (sequence-dependent, not chromosome-dependent)
-│   └─ Distal_Marker = 4qA_pLAM AND Chimeric = FALSE → Permissive = TRUE
-│       (functional ATTAAA PAS; applies to chr4 or chr10 translocations)
-│       All other cases → Permissive = FALSE
-│
-├─ COMPLETENESS
-│   ├─ Has_Head = proximal marker hit (D4F104S1 or P13E11)
-│   └─ Has_Tail = distal marker hit (4qA/4qB/10qA pLAM)
-│
-└─ OUTPUT: reads_annotated.tsv
-    Chromosome, Haplotype, Permissive, RU_Count, Has_Head, Has_Tail,
-    Proximal_Marker, Distal_Marker, Chimeric, Chr_Confidence, ...
-```
-
-### Chromosome confidence scoring
-
-| Level | Criterion |
-|-------|-----------|
-| HIGH | All motifs agree (minority side score = 0), or majority ≥ 80% of total motifs |
-| MEDIUM | Majority ≥ 60% but < 80% of total motifs |
-| LOW | No motif evidence (BAM-only), or majority < 60% (mixed evidence) |
-
-### 4qA-S / 4qA-L subtyping
-
-4qA-S (standard) and 4qA-L (long) differ only in the length of the most distal (terminal) D4Z4 repeat unit adjacent to pLAM (Lemmers et al., 2018). For reads with a `4qA_pLAM` hit, the pipeline finds the D4Z4 BLAST hit closest to the pLAM position: **>2800 bp** → **4qA-L** (full-length \~3.3 kb); **≤2800 bp** → **4qA-S** (truncated \~1.8 kb). Both subtypes are permissive.
-
----
-
-## Pipeline steps
-
-### Step 1: Extract FSHD-region reads (EXTRACT_FSHD_READS)
-
-Extract reads from FSHD-associated regions in hg38 coordinates plus unmapped reads.
-
-```
-BED (hg38):
-    chr4:189000000-190500000     # 4q35 D4Z4 flanking
-    chr10:133000000-134000000    # 10q26 D4Z4 flanking
-
-samtools view -b -h -M -L regions.bed -> target.bam
-samtools view -b -f 4 -> unmapped.bam
-samtools merge -> subset.bam
-```
-
-### Step 2: Realign to T2T-CHM13v2.0 (ALIGN_T2T)
-
-Realign to T2T, preserving MM, ML, HP, PS tags via `samtools fastq -T` and `minimap2 -y`.
-
-`minimap2 -ax lr:hq -y --eqx --secondary=no | samtools sort`
-
-### Step 3: Extract D4Z4 candidate reads (EXTRACT_D4Z4)
-
-```
-BED (T2T):
-    chr4:193230000-193610000
-    chr10:134560000-134800000
-```
-
-Published output: `{SAMPLE_ID}.d4z4.bam` + `.bai`
-
-### Step 4: Chromosome assignment, feature annotation, and validation (BLAST_ANNOTATE)
-
-BLAST-based per-read annotation following the approach of Lowenstern et al. (2026), Huang et al. (2024), and Butterfield et al. (2023). Three BLAST queries annotate each read, followed by biological validation:
-
-```
-blastn d4z4.fa              -> RU counting (hits > 1500 bp)
-blastn haplotype_markers.fa -> 6 haplotype-specific markers (proximal + distal)
-blastn P13E11.fasta         -> additional proximal anchor
-```
-
-After classification, the pipeline validates results against biological constraints and flags impossible configurations in a `Flag` column and a `validation.txt` report:
-
-| Check | Rule | Flag |
-|-------|------|------|
-| Haplotype count | At most 2 typed haplotypes per chromosome (excluding 4q/10q fragments) | WARN in validation.txt |
-| Completeness consistency | An incomplete read longer than the shortest complete read in the same haplotype group | `longer_than_complete` |
-| RU consistency | An incomplete read with more RUs than the max complete read RU in the same haplotype group | `RU_exceeds_complete` |
-| Fragment RU sanity | A fragment read (4q/10q) with RU exceeding the max complete RU across all alleles on that chromosome | `RU_exceeds_all_alleles` |
-| Chimeric detection | Proximal marker type ≠ distal marker type (possible translocation or chimeric read) | `chimeric` |
-
-### Step 5: Per-allele CpG methylation (METHYLATION)
-
-```
-modkit pileup <t2t.bam> meth_out/ \
-    --ref <t2t_reference.fna> \
-    --cpg --combine-strands \
-    --modified-bases 5mC \
-    --phased \
-    --include-bed meth_targets.bed
-```
-
-Target regions in `meth_targets.bed`: chr4:193,540,172–193,543,634 and chr10:134,738,000–134,741,148. Runs independently; only needs the T2T BAM from Step 2.
-
-### Step 6: Generate report (REPORT)
-
-Produces `repeats.tsv` and `methylation.tsv` from BLAST annotations and methylation pileup data.
-
----
-
-## Pipeline flow diagram
-
-```
-Input: hg38 BAM/CRAM (HP/PS + MM/ML tags)
-    |
-    v
-Step 1: EXTRACT_FSHD_READS (hg38 regions)
-    |
-    v
-Step 2: ALIGN_T2T (preserve MM/ML/HP/PS) -------.
-    |                                            |
-    v                                            |
-Step 3: EXTRACT_D4Z4                             |
-    |                                            |
-    v                                            |
-Step 4: BLAST_ANNOTATE                           |
-(RU count, anchors, BlnI+XapI chr,               |
- haplotype, validation)                          |
-    |                                            |
-    |                     Step 5: METHYLATION <--'
-    |                     (modkit --phased from T2T BAM)
-    |                            |
-    '----------+-----------------'
-               |
-               v
-           Step 6: REPORT
-           (repeats.tsv + methylation.tsv)
-```
-
----
-
-## Output
-
-Seven published files per sample:
-
-| File | Description |
-|------|-------------|
-| `{SAMPLE_ID}.d4z4.bam` | D4Z4 candidate reads aligned to T2T-CHM13v2.0 |
-| `{SAMPLE_ID}.d4z4.bam.bai` | BAM index |
-| `{SAMPLE_ID}.complete_reads.bam` | Complete reads (Has_Head AND Has_Tail) extracted from D4Z4 BAM |
-| `{SAMPLE_ID}.complete_reads.bam.bai` | BAM index |
-| `{SAMPLE_ID}.repeats.tsv` | D4Z4 repeat unit counts grouped by haplotype |
-| `{SAMPLE_ID}.methylation.tsv` | CpG methylation at distal D4Z4/DUX4 region |
-| `{SAMPLE_ID}.validation.txt` | Biological validation report with complete read details |
-
-### repeats.tsv
-
-One row per (Chromosome, Haplotype, Head, Tail) group. Chr4 rows appear above chr10 rows.
-
-| Column | Description |
-|--------|-------------|
-| Chromosome | chr4 or chr10 |
-| Haplotype | 4qA-S / 4qA-L / 4qA / 4qB / 4q / 10qA / 10qB / 10q (prefix matches chromosome) |
-| RU_Count | Maximum RU count among reads in this group. Prefixed with **≥** for incomplete reads (missing Head or Tail), indicating the count is a lower bound |
-| Head | TRUE if reads in this group carry a proximal marker (D4F104S1 or p13E-11) |
-| Tail | TRUE if reads in this group carry a distal marker (4qA/4qB/10qA pLAM) |
-| Read_Count | Number of reads in this group |
-
-### methylation.tsv
-
-| Column | Description |
-|--------|-------------|
-| Haplotype | HP1, HP2, or Combined |
-| Region | DR1 or DUX4-PAS |
-| Methylation | Mean % modified across CpGs in region |
-| N_CpG | Number of CpGs with data |
-| Ref_Atlas (Mean (SD) %) | ONT methylation reference atlas (\~45–49 healthy controls; Huang et al., 2024) |
-| Ref_Atlas (IQR %) | Interquartile range [Q1, Q2, Q3] computed from all CpG REF_METH values in the reference atlas |
-| Lit_Caputo (%) | Diagnostic threshold (Caputo et al., 2022; Strafella et al., 2024) |
-
-**Reference values (T2T coordinates):**
-
-| Region | T2T coordinates | Ref_Atlas Mean (SD) | Ref_Atlas IQR [Q1, Q2, Q3] | Lit_Caputo threshold |
-|--------|----------------|---------------------|---------------------------|---------------------|
-| DR1 | chr4:193,541,000–193,541,600 | 54.70% (1.97%) | [53.07%, 54.89%, 56.83%] | CpG1 ≤ 53% |
-| DUX4-PAS | chr4:193,543,430–193,543,634 | 51.81% (0.23%) | [51.63%, 51.75%, 51.99%] | CpG6 ≤ 78% |
-
----
-
-## Usage
-
-> **Note:** This pipeline must be run on the GS4 machine. Connect via `ssh gs4` before launching.
-
-```bash
-bash nf-fshd/run.sh /path/to/sample.bam
-```
-
-The `run.sh` script auto-detects the environment, builds the Apptainer container if needed, and launches Nextflow with `-resume`.
-
-**Input:** hg38-aligned BAM/CRAM with HP/PS tags (from any phasing tool) and MM/ML tags (from basecalling).
-
----
-
-## Upstream prerequisites
-
-These steps are performed outside this pipeline. The pipeline input is an hg38-aligned BAM/CRAM carrying both methylation tags (MM/ML) from basecalling and haplotype tags (HP/PS) from phasing. Any phasing tool that writes standard HP/PS tags is compatible.
-
-| Step | Tool | Version | Output | Reference |
-|------|------|---------|--------|-----------|
-| Basecalling | Dorado (SUP + `--modified-bases 5mCG_5hmCG`) | ≥0.7.0 | Unaligned modBAM with MM/ML tags | Oxford Nanopore Technologies (2024b) |
-| Genome-wide alignment | minimap2 (`-ax lr:hq`) | ≥2.28 | hg38-aligned BAM | Li (2018) |
-| Variant calling | e.g., Clair3 | — | VCF (SNPs for phasing) | Zheng et al. (2022) |
-| Phasing + haplotagging | e.g., LongPhase, WhatsHap | — | BAM with HP/PS tags | Lin et al. (2022); Martin et al. (2023) |
-
----
-
 ## Reference genome and query sequences
 
 **Reference:** T2T-CHM13v2.0 (Nurk et al., 2022; `GCF_009914755.1_T2T-CHM13v2.0_genomic.fna`)
@@ -371,7 +431,7 @@ These steps are performed outside this pipeline. The pipeline input is an hg38-a
 | Chr4 p13E-11 anchor | chr4:192,667,301–192,902,247 | Upstream unique anchoring region |
 | Chr10 D4Z4 array | chr10:134,615,120–134,741,148 | \~126 kb |
 
-**Query sequences (`nf-fshd/query/`):**
+**Query sequences (`FSHDetector/query/`):**
 
 | File | Sequences | Purpose |
 |------|-----------|---------|
@@ -394,7 +454,9 @@ These steps are performed outside this pipeline. The pipeline input is an hg38-a
 
 ## Software
 
-### Container (`environment.sif`, built from `environment.def`)
+### Analysis environment
+
+Nextflow provisions the tools below automatically from `environment.yml` (Conda) on the first run, pinned to the versions listed for reproducibility.
 
 | Tool | Version | Purpose | Reference |
 |------|---------|---------|-----------|
@@ -411,7 +473,7 @@ These steps are performed outside this pipeline. The pipeline input is an hg38-a
 | Tool | Purpose | Reference |
 |------|---------|-----------|
 | Nextflow | Workflow engine (DSL2) | Di Tommaso et al. (2017) |
-| Apptainer | Container runtime for `environment.sif` | Kurtzer et al. (2017) |
+| Conda | Builds the analysis environment from `environment.yml`; Miniforge recommended | |
 
 ---
 
@@ -486,8 +548,6 @@ Camacho, C., Coulouris, G., Avagyan, V., Ma, N., Papadopoulos, J., Bealer, K., &
 Danecek, P., Bonfield, J. K., Liddle, J., Marshall, J., Ohan, V., Pollard, M. O., Whitwham, A., Keane, T., McCarthy, S. A., Davies, R. M., & Li, H. (2021). Twelve years of SAMtools and BCFtools. *GigaScience*, *10*(2), Article giab008. https://doi.org/10.1093/gigascience/giab008
 
 Di Tommaso, P., Chatzou, M., Floden, E. W., Barja, P. P., Palumbo, E., & Notredame, C. (2017). Nextflow enables reproducible computational workflows. *Nature Biotechnology*, *35*(4), 316–319. https://doi.org/10.1038/nbt.3820
-
-Kurtzer, G. M., Sochat, V., & Bauer, M. W. (2017). Singularity: Scientific containers for mobility of compute. *PLOS ONE*, *12*(5), Article e0177459. https://doi.org/10.1371/journal.pone.0177459
 
 Li, H. (2018). Minimap2: Pairwise alignment for nucleotide sequences. *Bioinformatics*, *34*(18), 3094–3100. https://doi.org/10.1093/bioinformatics/bty191
 

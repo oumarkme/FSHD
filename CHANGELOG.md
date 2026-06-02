@@ -1,5 +1,16 @@
 # Changelog
 
+## v5.1 (2026-06-02)
+
+### Added — dual-reference input (hg38 or T2T)
+- Input BAM/CRAM may now be aligned to **hg38 or T2T-CHM13v2.0**. `--input_ref auto` (default) detects the build from the `@SQ` chr4 length, routing to whichever canonical length (hg38 190,214,555 / T2T 193,574,945) is closer; `--input_ref hg38|t2t` forces it.
+- New `DETECT_REF` process (header-only build detection) and `SUBSET_T2T` process (subsets an already-T2T-aligned input to the D4Z4 region, replacing Steps 1–2 — no realignment). Both lanes converge on the same T2T BAM feeding the unchanged Steps 3–6.
+- A T2T CRAM is decoded with `--ref_t2t`; `--ref_hg38` is now needed only to decode an **hg38 CRAM**.
+
+### Changed
+- D4Z4 region coordinates centralized in `assets/d4z4_regions.bed`, shared by `EXTRACT_D4Z4` and `SUBSET_T2T` (the hg38-flanking and methylation-target BEDs are unchanged).
+- Process `stub`/`script` sections reordered (`script` first) to satisfy the strict Nextflow grammar (`nextflow lint` / language server); no behavioural change.
+
 ## v5.0 (2026-06-01)
 
 ### Renamed

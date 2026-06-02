@@ -3,6 +3,50 @@ nextflow.enable.dsl = 2
 
 
 // ============================================================================
+// Step 0 (auto mode): detect the input's alignment reference from its header
+//   Reads the @SQ chr4 length and routes to whichever canonical length is
+//   closer: T2T-CHM13v2.0 chr4 = 193574945 ; hg38 chr4 = 190214555. Using
+//   "closer of the two" (not exact match) tolerates minor build variants.
+//   Reading a header needs NO reference, even for CRAM. Emits 'hg38' or 't2t'
+//   in build.txt; the workflow reads it to route between the two lanes.
+// ============================================================================
+process DETECT_REF {
+    tag "${sample_id}"
+
+    input:
+    path input_file
+    val  sample_id
+
+    output:
+    path "build.txt", emit: build
+
+    script:
+    """
+    chr4_len=\$(samtools view -H ${input_file} | awk -F'\\t' '\$1=="@SQ"{s=0;l="";for(i=2;i<=NF;i++){if(\$i=="SN:chr4")s=1;if(substr(\$i,1,3)=="LN:")l=substr(\$i,4)}if(s){print l;exit}}')
+
+    if ! [[ "\$chr4_len" =~ ^[0-9]+\$ ]]; then
+        echo "ERROR: could not read a chr4 @SQ length from ${input_file}." >&2
+        echo "  Pass --input_ref hg38|t2t to override header detection." >&2
+        exit 1
+    fi
+
+    # Route to whichever canonical chr4 length is closer (hg38=190214555,
+    # T2T-v2.0=193574945) so minor build variants still resolve correctly.
+    d_hg38=\$(( chr4_len > 190214555 ? chr4_len - 190214555 : 190214555 - chr4_len ))
+    d_t2t=\$((  chr4_len > 193574945 ? chr4_len - 193574945 : 193574945 - chr4_len ))
+
+    if [ "\$d_t2t" -le "\$d_hg38" ]; then echo t2t > build.txt; else echo hg38 > build.txt; fi
+    echo "DETECT_REF: chr4 LN=\$chr4_len -> \$(cat build.txt) (|d_hg38|=\$d_hg38, |d_t2t|=\$d_t2t)" >&2
+    """
+
+    stub:
+    """
+    echo t2t > build.txt
+    """
+}
+
+
+// ============================================================================
 // Step 1: Extract FSHD-region reads from hg38 BAM/CRAM
 // ============================================================================
 process EXTRACT_FSHD_READS {
@@ -17,13 +61,15 @@ process EXTRACT_FSHD_READS {
     output:
     path "${sample_id}.subset.bam", emit: bam
 
-    stub:
-    """
-    touch ${sample_id}.subset.bam
-    """
-
     script:
     """
+    # An hg38 CRAM needs --ref_hg38 to decode. In auto mode the build isn't known
+    # until DETECT_REF runs, so guard here (no-op for valid inputs / BAM input).
+    if [[ "${input_file}" == *.cram && "${ref_hg38}" == "NO_REF" ]]; then
+        echo "ERROR: hg38 CRAM input requires --ref_hg38 (the reference it was aligned to)." >&2
+        exit 1
+    fi
+
     cat > regions.bed << 'EOF'
 chr4	189000000	190500000	4q35_D4Z4_flanking
 chr10	133000000	134000000	10q26_D4Z4_flanking
@@ -39,6 +85,11 @@ EOF
     samtools view -b -f 4 \$REF_OPT -@ ${task.cpus} ${input_file} -o unmapped.bam 2>&1 | \
         grep -v 'cram_decode_seq\\|cram_next_slice' >&2 || true
     samtools merge -@ ${task.cpus} -o ${sample_id}.subset.bam target.bam unmapped.bam
+    """
+
+    stub:
+    """
+    touch ${sample_id}.subset.bam
     """
 }
 
@@ -58,11 +109,6 @@ process ALIGN_T2T {
     path "${sample_id}.t2t.bam",     emit: bam
     path "${sample_id}.t2t.bam.bai", emit: bai
 
-    stub:
-    """
-    touch ${sample_id}.t2t.bam ${sample_id}.t2t.bam.bai
-    """
-
     script:
     def tags = 'MM,ML,HP,PS'
     """
@@ -72,6 +118,53 @@ process ALIGN_T2T {
         | samtools sort -@ ${task.cpus} -o ${sample_id}.t2t.bam
 
     samtools index -@ ${task.cpus} ${sample_id}.t2t.bam
+    """
+
+    stub:
+    """
+    touch ${sample_id}.t2t.bam ${sample_id}.t2t.bam.bai
+    """
+}
+
+
+// ============================================================================
+// Step 2-alt (T2T input): subset an already-T2T-aligned BAM/CRAM to the D4Z4
+//   region, replacing Steps 1-2. No realignment — the reads are already on T2T.
+//   Emits the same ${sample_id}.t2t.bam(.bai) shape as ALIGN_T2T so Steps 3-6
+//   are unchanged. Mirrors manuscript/src/fshdetector.R Step 3 (Track B).
+// ============================================================================
+process SUBSET_T2T {
+    tag "${sample_id}"
+
+    input:
+    path input_file
+    path input_index
+    path ref_t2t
+    path d4z4_bed
+    val  sample_id
+
+    output:
+    path "${sample_id}.t2t.bam",     emit: bam
+    path "${sample_id}.t2t.bam.bai", emit: bai
+
+    script:
+    """
+    REF_OPT=""
+    if [[ "${input_file}" == *.cram ]]; then
+        REF_OPT="--reference ${ref_t2t}"
+    fi
+
+    samtools view -b -h -M -L ${d4z4_bed} \$REF_OPT -@ ${task.cpus} ${input_file} -o target.bam 2>&1 | \
+        grep -v 'cram_decode_seq\\|cram_next_slice' >&2 || true
+    samtools view -b -f 4 \$REF_OPT -@ ${task.cpus} ${input_file} -o unmapped.bam 2>&1 | \
+        grep -v 'cram_decode_seq\\|cram_next_slice' >&2 || true
+    samtools merge -f -@ ${task.cpus} -o ${sample_id}.t2t.bam target.bam unmapped.bam
+    samtools index -@ ${task.cpus} ${sample_id}.t2t.bam
+    """
+
+    stub:
+    """
+    touch ${sample_id}.t2t.bam ${sample_id}.t2t.bam.bai
     """
 }
 
@@ -86,28 +179,24 @@ process EXTRACT_D4Z4 {
     input:
     path bam
     path bai
+    path d4z4_bed
     val  sample_id
 
     output:
     path "${sample_id}.d4z4.bam",     emit: bam
     path "${sample_id}.d4z4.bam.bai", emit: bai
 
-    stub:
-    """
-    touch ${sample_id}.d4z4.bam ${sample_id}.d4z4.bam.bai
-    """
-
     script:
     """
-    cat > d4z4_regions.bed << 'EOF'
-chr4	193230000	193610000	chr4_D4Z4
-chr10	134560000	134800000	chr10_D4Z4
-EOF
-
-    samtools view -b -h -M -L d4z4_regions.bed -@ ${task.cpus} ${bam} -o target.bam
+    samtools view -b -h -M -L ${d4z4_bed} -@ ${task.cpus} ${bam} -o target.bam
     samtools view -b -f 4 -@ ${task.cpus} ${bam} -o unmapped.bam
     samtools merge -@ ${task.cpus} -o ${sample_id}.d4z4.bam target.bam unmapped.bam
     samtools index -@ ${task.cpus} ${sample_id}.d4z4.bam
+    """
+
+    stub:
+    """
+    touch ${sample_id}.d4z4.bam ${sample_id}.d4z4.bam.bai
     """
 }
 
@@ -155,11 +244,6 @@ process BLAST_ANNOTATE {
     path "${sample_id}.validation.txt",            emit: validation
     path "${sample_id}.complete_reads.bam",        emit: complete_bam
     path "${sample_id}.complete_reads.bam.bai",    emit: complete_bai
-
-    stub:
-    """
-    touch ${sample_id}.reads_annotated.tsv ${sample_id}.validation.txt ${sample_id}.complete_reads.bam ${sample_id}.complete_reads.bam.bai
-    """
 
     script:
     """
@@ -565,7 +649,8 @@ with open(f'{sample_id}.validation.txt', 'w') as vf:
             for _, r in complete.sort_values('RU_Count', ascending=False).iterrows():
                 chim_str = '  CHIMERIC' if r.get('Chimeric', False) else ''
                 vf.write(f'    {r["Read_ID"]}\\n')
-                vf.write(f'      RU={r["RU_Count"]}  Read_Length={r["Read_Length"]}  Chr_Confidence={r["Chr_Confidence"]}\\n')
+                vf.write(f'      RU={r["RU_Count"]}  Read_Length={r["Read_Length"]}  '
+                         f'Chr_Confidence={r["Chr_Confidence"]}\\n')
                 vf.write(f'      Proximal_Marker={r["Proximal_Marker"] if r["Proximal_Marker"] else "-"}  '
                          f'Distal_Marker={r["Distal_Marker"] if r["Distal_Marker"] else "-"}{chim_str}\\n')
                 vf.write(f'      BlnI_Chr4={r["BlnI_Chr4"]}  BlnI_Chr10={r["BlnI_Chr10"]}\\n')
@@ -603,6 +688,11 @@ PYEOF
     fi
     samtools index -@ ${task.cpus} ${sample_id}.complete_reads.bam
     """
+
+    stub:
+    """
+    touch ${sample_id}.reads_annotated.tsv ${sample_id}.validation.txt ${sample_id}.complete_reads.bam ${sample_id}.complete_reads.bam.bai
+    """
 }
 
 
@@ -624,11 +714,6 @@ process METHYLATION {
     path "${sample_id}.methylation_HP1.bed",       emit: hp1_bed
     path "${sample_id}.methylation_HP2.bed",       emit: hp2_bed
     path "${sample_id}.methylation_ungrouped.bed", emit: ungrouped_bed
-
-    stub:
-    """
-    touch ${sample_id}.methylation_HP1.bed ${sample_id}.methylation_HP2.bed ${sample_id}.methylation_ungrouped.bed
-    """
 
     script:
     """
@@ -668,6 +753,11 @@ EOF
         touch ${sample_id}.methylation_ungrouped.bed
     fi
     """
+
+    stub:
+    """
+    touch ${sample_id}.methylation_HP1.bed ${sample_id}.methylation_HP2.bed ${sample_id}.methylation_ungrouped.bed
+    """
 }
 
 
@@ -691,11 +781,6 @@ process REPORT {
     output:
     path "${sample_id}.repeats.tsv",     emit: repeats
     path "${sample_id}.methylation.tsv", emit: methylation
-
-    stub:
-    """
-    touch ${sample_id}.repeats.tsv ${sample_id}.methylation.tsv
-    """
 
     script:
     """
@@ -815,6 +900,11 @@ pd.DataFrame(meth_rows, columns=[
 ]).to_csv(f'{sample_id}.methylation.tsv', sep='\\t', index=False)
 PYEOF
     """
+
+    stub:
+    """
+    touch ${sample_id}.repeats.tsv ${sample_id}.methylation.tsv
+    """
 }
 
 
@@ -825,34 +915,77 @@ PYEOF
 // ============================================================================
 workflow {
     // --- Validate required parameters (clear errors instead of cryptic staging failures) ---
-    if (!params.input)   error "Missing --input: an hg38-aligned BAM/CRAM with HP/PS + MM/ML tags"
+    if (!params.input)   error "Missing --input: an hg38- or T2T-aligned BAM/CRAM with HP/PS + MM/ML tags"
     if (!params.ref_t2t) error "Missing --ref_t2t: the T2T-CHM13v2.0 reference FASTA (with its .fai index alongside)"
+    if (!(params.input_ref in ['auto', 'hg38', 't2t']))
+        error "Invalid --input_ref '${params.input_ref}': expected auto, hg38, or t2t"
 
     def input_file = file(params.input, checkIfExists: true)
     def sample_id  = input_file.baseName
     def is_cram    = input_file.name.endsWith('.cram')
 
-    // --ref_hg38 is only consumed to decode CRAM. BAM input can omit it; we then
-    // stage a placeholder so the EXTRACT_FSHD_READS signature stays uniform.
-    if (is_cram && !params.ref_hg38)
-        error "CRAM input requires --ref_hg38 (the reference the CRAM was aligned to)"
+    // --ref_hg38 is only consumed to decode an hg38 CRAM. T2T input and BAM input
+    // omit it; we then stage a placeholder so the EXTRACT_FSHD_READS signature
+    // stays uniform. For --input_ref hg38 + CRAM we require it up front; in 'auto'
+    // the build isn't known until DETECT_REF runs, so EXTRACT_FSHD_READS guards it.
+    if (params.input_ref == 'hg38' && is_cram && !params.ref_hg38)
+        error "hg38 CRAM input requires --ref_hg38 (the reference the CRAM was aligned to)"
     def ref_hg38 = params.ref_hg38 ? file(params.ref_hg38, checkIfExists: true)
                                    : file("${projectDir}/assets/NO_REF", checkIfExists: true)
 
     def ref_t2t     = file(params.ref_t2t,          checkIfExists: true)
     def ref_t2t_fai = file("${params.ref_t2t}.fai", checkIfExists: true)
+    def d4z4_bed    = file(params.d4z4_regions_bed, checkIfExists: true)
 
     def idx_ext   = is_cram ? '.crai' : '.bai'
     def input_idx = file("${params.input}${idx_ext}", checkIfExists: true)
 
-    // Step 1: Extract FSHD-region reads
-    EXTRACT_FSHD_READS(input_file, input_idx, ref_hg38, sample_id)
+    // --- Produce a T2T BAM (Steps 1-2 for hg38 input, or Step 2-alt for T2T input) ---
+    // Both lanes emit ${sample_id}.t2t.bam(.bai); Steps 3-6 below are then identical.
+    def t2t_bam
+    def t2t_bai
 
-    // Step 2: Realign to T2T (HP/PS tags preserved)
-    ALIGN_T2T(EXTRACT_FSHD_READS.out.bam, ref_t2t, sample_id)
+    if (params.input_ref in ['hg38', 't2t']) {
+        // Explicit build is a compile-time value → route with a plain if/else.
+        // The hg38 branch is byte-for-byte the previous pipeline.
+        if (params.input_ref == 'hg38') {
+            EXTRACT_FSHD_READS(input_file, input_idx, ref_hg38, sample_id)   // Step 1
+            ALIGN_T2T(EXTRACT_FSHD_READS.out.bam, ref_t2t, sample_id)        // Step 2
+            t2t_bam = ALIGN_T2T.out.bam
+            t2t_bai = ALIGN_T2T.out.bai
+        } else {
+            SUBSET_T2T(input_file, input_idx, ref_t2t, d4z4_bed, sample_id)  // Step 2-alt
+            t2t_bam = SUBSET_T2T.out.bam
+            t2t_bai = SUBSET_T2T.out.bai
+        }
+    } else {
+        // 'auto': the build is only known at run time. A process output is a
+        // channel (not a value), so routing MUST use dataflow operators
+        // (.branch/.mix), never a Groovy if/else.
+        DETECT_REF(input_file, sample_id)                                   // Step 0
+        def lanes = DETECT_REF.out.build
+            .map { bf -> tuple(bf.text.trim(), input_file, input_idx, ref_hg38) }
+            .branch { row ->
+                hg38: row[0] == 'hg38'
+                t2t : row[0] == 't2t'
+            }
+
+        // hg38 lane → Steps 1-2
+        EXTRACT_FSHD_READS(lanes.hg38.map { r -> r[1] }, lanes.hg38.map { r -> r[2] },
+                           lanes.hg38.map { r -> r[3] }, sample_id)
+        ALIGN_T2T(EXTRACT_FSHD_READS.out.bam, ref_t2t, sample_id)
+
+        // t2t lane → Step 2-alt
+        SUBSET_T2T(lanes.t2t.map { r -> r[1] }, lanes.t2t.map { r -> r[2] },
+                   ref_t2t, d4z4_bed, sample_id)
+
+        // Unify the lanes (single sample → exactly one is populated).
+        t2t_bam = ALIGN_T2T.out.bam.mix(SUBSET_T2T.out.bam)
+        t2t_bai = ALIGN_T2T.out.bai.mix(SUBSET_T2T.out.bai)
+    }
 
     // Step 3: Extract D4Z4 candidates
-    EXTRACT_D4Z4(ALIGN_T2T.out.bam, ALIGN_T2T.out.bai, sample_id)
+    EXTRACT_D4Z4(t2t_bam, t2t_bai, d4z4_bed, sample_id)
 
     // Step 4: BLAST annotation with haplotype-specific markers
     BLAST_ANNOTATE(
@@ -861,9 +994,9 @@ workflow {
         file(params.query_p13e11)
     )
 
-    // Step 5: CpG methylation (HP tags from T2T BAM)
+    // Step 5: CpG methylation (HP tags carried on the T2T BAM)
     METHYLATION(
-        ALIGN_T2T.out.bam, ALIGN_T2T.out.bai,
+        t2t_bam, t2t_bai,
         ref_t2t, ref_t2t_fai, sample_id
     )
 

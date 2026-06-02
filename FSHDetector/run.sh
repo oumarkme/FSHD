@@ -4,9 +4,14 @@
 # Usage:
 #   bash FSHDetector/run.sh <input.bam|cram> [extra nextflow options]
 #
-# Provide the references (--ref_hg38 is required for CRAM; BAM may omit it):
+# The input may be hg38- or T2T-aligned; the build is auto-detected (override
+# with --input_ref hg38|t2t). --ref_t2t is always required. --ref_hg38 is only
+# needed to decode an hg38 CRAM (a T2T CRAM is decoded with --ref_t2t).
+#   # hg38 input:
 #   bash FSHDetector/run.sh sample.bam \
 #       --ref_hg38 /path/to/hg38.fa --ref_t2t /path/to/T2T-CHM13v2.0.fna
+#   # T2T-aligned input (no --ref_hg38 needed):
+#   bash FSHDetector/run.sh sample.t2t.bam --ref_t2t /path/to/T2T-CHM13v2.0.fna
 #
 # This wrapper just adds -resume. You can equally call Nextflow directly:
 #   nextflow run FSHDetector/main.nf --input sample.bam \

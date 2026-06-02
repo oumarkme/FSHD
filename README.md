@@ -1,8 +1,8 @@
 # FSHDetector: ONT D4Z4 Repeat Unit Counting, Haplotyping, and Methylation Pipeline
 
-A Nextflow DSL2 pipeline for FSHD diagnosis from hg38-aligned ONT BAM/CRAM files with HP tags from upstream phasing. The pipeline resolves all four D4Z4 alleles (2× chr4, 2× chr10), determines 4qA-L/4qA-S/4qB haplotype, counts D4Z4 repeat units per allele via per-read BLAST annotation, validates results against biological constraints, and reports allele-specific CpG methylation at the distal DUX4 region. All analysis coordinates reference **T2T-CHM13v2.0**.
+A Nextflow DSL2 pipeline for FSHD diagnosis from **hg38- or T2T-aligned** ONT BAM/CRAM files with HP tags from upstream phasing. The pipeline resolves all four D4Z4 alleles (2× chr4, 2× chr10), determines 4qA-L/4qA-S/4qB haplotype, counts D4Z4 repeat units per allele via per-read BLAST annotation, validates results against biological constraints, and reports allele-specific CpG methylation at the distal DUX4 region. All analysis coordinates reference **T2T-CHM13v2.0**; the input's alignment build is detected automatically (or set with `--input_ref`).
 
-> **Just want to run it?** → **[Quick start](#quick-start)**. You need a phased, hg38-aligned ONT BAM/CRAM plus [Nextflow and Conda](#prerequisites) — no other installs.
+> **Just want to run it?** → **[Quick start](#quick-start)**. You need a phased, hg38- or T2T-aligned ONT BAM/CRAM plus [Nextflow and Conda](#prerequisites) — no other installs.
 
 ## Contents
 
@@ -36,12 +36,20 @@ Nothing else needs to be installed: on the first run Nextflow builds the tool en
 
 ### Reference genomes
 
-Two FASTA references are needed (place the T2T `.fai` index next to its FASTA):
+`--ref_t2t` is always required; `--ref_hg38` is only needed to decode an **hg38 CRAM** (place the T2T `.fai` index next to its FASTA):
 
 | Parameter | Reference | Notes |
 |-----------|-----------|-------|
-| `--ref_hg38` | The hg38 build your input was aligned to | Decodes CRAM and is the coordinate basis for region extraction. **Required for CRAM input; optional for BAM.** |
-| `--ref_t2t` | T2T-CHM13v2.0 (`GCF_009914755.1_T2T-CHM13v2.0_genomic.fna`) | All analysis coordinates. Index once: `samtools faidx <t2t.fna>`. |
+| `--ref_t2t` | T2T-CHM13v2.0 (`GCF_009914755.1_T2T-CHM13v2.0_genomic.fna`) | All analysis coordinates; also decodes a T2T CRAM. Index once: `samtools faidx <t2t.fna>`. **Always required.** |
+| `--ref_hg38` | The hg38 build your input was aligned to | Decodes an hg38 CRAM and is the coordinate basis for hg38 region extraction. **Required only for hg38 CRAM input;** not needed for BAM or for T2T input. |
+
+The input's alignment build is selected by `--input_ref`:
+
+| Value | Behaviour |
+|-------|-----------|
+| `auto` *(default)* | Detect the build from the BAM/CRAM header (`@SQ` chr4 length), routing to whichever of hg38 / T2T is closer. Prevents silently mis-routing a T2T file through the hg38 path. |
+| `hg38` | Force the hg38 path (extract FSHD region + realign to T2T). |
+| `t2t` | Force the T2T path (subset to D4Z4 directly; Steps 1–2 skipped). |
 
 ### Quick start
 
@@ -49,11 +57,22 @@ Two FASTA references are needed (place the T2T `.fai` index next to its FASTA):
 git clone https://github.com/oumarkme/FSHD.git
 cd FSHD
 
+# hg38-aligned input (build auto-detected):
 nextflow run FSHDetector/main.nf \
     --input    /path/to/sample.bam \
     --ref_hg38 /path/to/hg38.fa \
     --ref_t2t  /path/to/T2T-CHM13v2.0.fna \
     --outdir   results
+```
+
+For a **T2T-aligned** input, omit `--ref_hg38` (Steps 1–2 are skipped). The build is auto-detected, so `--input_ref` is optional — pass it only to override detection:
+
+```bash
+nextflow run FSHDetector/main.nf \
+    --input   /path/to/sample.t2t.bam \
+    --ref_t2t /path/to/T2T-CHM13v2.0.fna \
+    --outdir  results
+# (add --input_ref t2t to force the T2T path)
 ```
 
 Conda is the default engine, so the first run builds the environment (a few minutes) and reuses it afterwards. Per-sample results are written under `--outdir` (default `results/`).
@@ -74,13 +93,13 @@ bash FSHDetector/run.sh /path/to/sample.bam \
 
 ### Input
 
-hg38-aligned BAM/CRAM with **HP/PS tags** (from any phasing tool) and **MM/ML tags** (from basecalling). The matching `.bai`/`.crai` index must sit next to it. BAM input does not require `--ref_hg38`; CRAM input does. See [Upstream prerequisites](#upstream-prerequisites) for how to produce this file.
+**hg38- or T2T-aligned** BAM/CRAM with **HP/PS tags** (from any phasing tool) and **MM/ML tags** (from basecalling). The matching `.bai`/`.crai` index must sit next to it. The alignment build is auto-detected (override with `--input_ref hg38|t2t`). `--ref_hg38` is needed only to decode an hg38 CRAM; a T2T CRAM is decoded with `--ref_t2t`, and BAM input needs no reference to decode. See [Upstream prerequisites](#upstream-prerequisites) for how to produce this file.
 
 ---
 
 ## Upstream prerequisites
 
-These steps are performed outside this pipeline. The pipeline input is an hg38-aligned BAM/CRAM carrying both methylation tags (MM/ML) from basecalling and haplotype tags (HP/PS) from phasing. Any phasing tool that writes standard HP/PS tags is compatible.
+These steps are performed outside this pipeline. The pipeline input is an hg38- or T2T-aligned BAM/CRAM carrying both methylation tags (MM/ML) from basecalling and haplotype tags (HP/PS) from phasing. Any phasing tool that writes standard HP/PS tags is compatible.
 
 | Step | Tool | Version | Output | Reference |
 |------|------|---------|--------|-----------|
@@ -142,15 +161,22 @@ One row per (Chromosome, Haplotype, Head, Tail) group. Chr4 rows appear above ch
 ## Pipeline flow diagram
 
 ```
-Input: hg38 BAM/CRAM (HP/PS + MM/ML tags)
+Input: hg38- or T2T-aligned BAM/CRAM (HP/PS + MM/ML tags)
     |
     v
-Step 1: EXTRACT_FSHD_READS (hg38 regions)
+Step 0: DETECT_REF (auto mode — @SQ chr4 length)
     |
-    v
-Step 2: ALIGN_T2T (preserve MM/ML/HP/PS) -------.
-    |                                            |
-    v                                            |
+    +---- hg38 input ----.            +---- T2T input ----.
+    |                    v            |                   v
+    |   Step 1: EXTRACT_FSHD_READS    |   Step 2-alt: SUBSET_T2T
+    |   (hg38 regions)                |   (D4Z4 region, no realign)
+    |          |                      |          |
+    |          v                      |          |
+    |   Step 2: ALIGN_T2T             |          |
+    |   (preserve MM/ML/HP/PS)        |          |
+    '----------+----------------------'----------'
+    |          | (unified T2T BAM) ------------------------.
+    v          v                                           |
 Step 3: EXTRACT_D4Z4                             |
     |                                            |
     v                                            |
@@ -172,7 +198,13 @@ Step 4: BLAST_ANNOTATE                           |
 
 ## Pipeline steps
 
-### Step 1: Extract FSHD-region reads (EXTRACT_FSHD_READS)
+The input may be aligned to **hg38** or **T2T-CHM13v2.0**. In `auto` mode (default) Step 0 detects which, then routes to the hg38 path (Steps 1–2) or the T2T path (Step 2-alt). Both paths produce the same T2T BAM that feeds the shared Steps 3–6.
+
+### Step 0: Detect alignment reference (DETECT_REF, auto mode only)
+
+Read the BAM/CRAM header and compare its `@SQ` chr4 length against the two canonical values (hg38 = 190,214,555; T2T-CHM13v2.0 = 193,574,945), routing to whichever is closer. Reading the header needs no reference, even for CRAM. Skipped when `--input_ref hg38|t2t` is set explicitly.
+
+### Step 1: Extract FSHD-region reads (EXTRACT_FSHD_READS) — *hg38 input only*
 
 Extract reads from FSHD-associated regions in hg38 coordinates plus unmapped reads.
 
@@ -186,16 +218,20 @@ samtools view -b -f 4 -> unmapped.bam
 samtools merge -> subset.bam
 ```
 
-### Step 2: Realign to T2T-CHM13v2.0 (ALIGN_T2T)
+### Step 2: Realign to T2T-CHM13v2.0 (ALIGN_T2T) — *hg38 input only*
 
 Realign to T2T, preserving MM, ML, HP, PS tags via `samtools fastq -T` and `minimap2 -y`.
 
 `minimap2 -ax lr:hq -y --eqx --secondary=no | samtools sort`
 
+### Step 2-alt: Subset a T2T-aligned input (SUBSET_T2T) — *T2T input only*
+
+When the input is already T2T-aligned, Steps 1–2 are unnecessary. Subset directly to the D4Z4 region (the shared `assets/d4z4_regions.bed`, same coordinates as Step 3) plus unmapped reads, then sort and index — producing the same `{SAMPLE_ID}.t2t.bam` that ALIGN_T2T would. A T2T CRAM is decoded with `--ref_t2t`. No realignment occurs, so the reads keep their original T2T coordinates and tags.
+
 ### Step 3: Extract D4Z4 candidate reads (EXTRACT_D4Z4)
 
 ```
-BED (T2T):
+BED (T2T, assets/d4z4_regions.bed):
     chr4:193230000-193610000
     chr10:134560000-134800000
 ```
@@ -233,7 +269,7 @@ modkit pileup <t2t.bam> meth_out/ \
     --include-bed meth_targets.bed
 ```
 
-Target regions in `meth_targets.bed`: chr4:193,540,172–193,543,634 and chr10:134,738,000–134,741,148. Runs independently; only needs the T2T BAM from Step 2.
+Target regions in `meth_targets.bed`: chr4:193,540,172–193,543,634 and chr10:134,738,000–134,741,148. Runs independently; only needs the T2T BAM from Step 2 (hg38 input) or Step 2-alt (T2T input).
 
 ### Step 6: Generate report (REPORT)
 

@@ -4,6 +4,23 @@ A Nextflow DSL2 pipeline for FSHD diagnosis from **hg38- or T2T-aligned** ONT BA
 
 > **Just want to run it?** → **[Quick start](#quick-start)**. You need a phased, hg38- or T2T-aligned ONT BAM/CRAM plus [Nextflow and Conda](#prerequisites) — no other installs.
 
+## Versions
+
+| Version | Where | Use it for |
+|---------|-------|------------|
+| **v5.1.0 (manuscript version)** | tag [`v5.1.0`](https://github.com/oumarkme/FSHD/tree/v5.1.0) (commit `28f10b6`) | Running the version that our manuscript describes |
+| Newer versions | `main` branch | Current work. We update it continuously, so results may differ from v5.1.0 |
+
+To get the manuscript version:
+
+```bash
+git clone https://github.com/oumarkme/FSHD.git
+cd FSHD
+git checkout v5.1.0
+```
+
+With v5.1.0, set `--input_ref hg38` or `--input_ref t2t`. Its automatic build detection can stop with an error on files that have long headers.
+
 ## Contents
 
 **Getting started**

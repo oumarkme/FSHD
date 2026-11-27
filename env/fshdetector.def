@@ -1,0 +1,113 @@
+# FSHDetector image. Build from the repository root:
+#   apptainer build --fakeroot fshdetector.sif env/fshdetector.def
+# The first stage compiles the package; the final image has no compiler. Every
+# package version is pinned in the two specifications below.
+
+Bootstrap: docker
+From: ubuntu:24.04
+Stage: build
+
+%files
+    pyproject.toml /opt/source/pyproject.toml
+    setup.py /opt/source/setup.py
+    README.md /opt/source/README.md
+    LICENSE /opt/source/LICENSE
+    src /opt/source/src
+
+%post
+    set -eu
+    export DEBIAN_FRONTEND=noninteractive
+    export MAMBA_ROOT_PREFIX=/opt/conda
+    apt-get update
+    apt-get install -y --no-install-recommends ca-certificates curl
+    curl -fsSL https://github.com/mamba-org/micromamba-releases/releases/download/2.5.0-2/micromamba-linux-64 \
+        -o /usr/local/bin/micromamba
+    chmod +x /usr/local/bin/micromamba
+    cat > /opt/build.yml <<'SPEC'
+name: build
+channels:
+    - conda-forge
+dependencies:
+    - conda-forge::python=3.13.18
+    - conda-forge::numpy=2.5.5
+    - conda-forge::cython=3.3.2
+    - conda-forge::setuptools=84.2.1
+    - conda-forge::pip=26.2.2
+    - conda-forge::c-compiler=2.0.0
+SPEC
+    micromamba create -y -f /opt/build.yml
+    micromamba run -n build pip wheel --no-deps --no-build-isolation \
+        --no-cache-dir -w /opt/wheel /opt/source
+
+Bootstrap: docker
+From: ubuntu:24.04
+Stage: final
+
+%labels
+    Author Jen-Hsiang Ou
+    Image fshdetector
+    Description D4Z4 repeat counting, haplotyping, and methylation from ONT reads
+    Micromamba 2.5.0-2
+
+%files from build
+    /opt/wheel /opt/wheel
+
+%files
+    tests /opt/tests
+
+%post
+    set -eu
+    export DEBIAN_FRONTEND=noninteractive
+    export MAMBA_ROOT_PREFIX=/opt/conda
+    apt-get update
+    apt-get install -y --no-install-recommends ca-certificates curl bzip2
+    curl -fsSL https://github.com/mamba-org/micromamba-releases/releases/download/2.5.0-2/micromamba-linux-64 \
+        -o /usr/local/bin/micromamba
+    chmod +x /usr/local/bin/micromamba
+    cat > /opt/fshdetector.yml <<'SPEC'
+name: fshdetector
+channels:
+    - conda-forge
+    - bioconda
+dependencies:
+    - conda-forge::python=3.13.18
+    - conda-forge::numpy=2.5.5
+    - conda-forge::pip=26.2.2
+    - conda-forge::pytest=9.2.0
+    - bioconda::pysam=0.24.1
+    - bioconda::blast=2.17.0
+    - bioconda::minimap2=2.31
+    - bioconda::ont-modkit=0.6.4
+SPEC
+    micromamba create -y -f /opt/fshdetector.yml
+    micromamba run -n fshdetector pip install --no-deps --no-cache-dir /opt/wheel/*.whl
+    # Record the exact solved package list inside the image.
+    micromamba list -n fshdetector > /opt/fshdetector.packages.txt
+    # Shrink: caches, static libraries, bytecode, documentation, apt leftovers.
+    micromamba clean -afy
+    rm -rf /opt/conda/pkgs /opt/wheel /opt/fshdetector.yml /usr/local/bin/micromamba
+    find /opt/conda -name '*.a' -delete
+    find /opt/conda -type d -name '__pycache__' -prune -exec rm -rf {} +
+    env_dir=/opt/conda/envs/fshdetector
+    rm -rf "$env_dir/share/doc" "$env_dir/share/man" "$env_dir/share/info"
+    # Compile once, because the image is read-only at run time.
+    "$env_dir/bin/python" -m compileall -q "$env_dir/lib" > /dev/null || true
+    apt-get purge -y curl bzip2
+    apt-get autoremove -y
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+
+%environment
+    export PATH=/opt/conda/envs/fshdetector/bin:$PATH
+    export LC_ALL=C.UTF-8
+
+%runscript
+    exec fshdetector "$@"
+
+%test
+    fshdetector --version
+    cd /opt && python -m pytest -q -p no:cacheprovider tests
+
+%help
+    fshdetector run --input sample.bam --ref-t2t t2t.fa --outdir results
+    Packages and versions: apptainer exec fshdetector.sif cat /opt/fshdetector.packages.txt

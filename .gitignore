@@ -17,3 +17,16 @@ run_all_fshd.sh
 docs/
 .vscode/
 .claude/
+
+# Development notes
+PLAN.md
+
+# Build products
+__pycache__/
+*.egg-info/
+build/
+dist/
+*.so
+src/fshdetector/_screen.c
+src/fshdetector/_score.c
+*.sif
